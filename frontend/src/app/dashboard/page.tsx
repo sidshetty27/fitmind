@@ -1,16 +1,22 @@
 import { currentUser } from "@clerk/nextjs/server";
+import { redirect } from "next/navigation";
 
 /**
  * Protected dashboard (Phase 2).
  *
- * `src/proxy.ts` guarantees only signed-in users reach this route, but we also
- * read the user server-side here: this is where real product data will hang off
- * the authenticated user in later phases. `currentUser()` runs on the server and
- * never exposes secrets to the client.
+ * This page is the authoritative auth guard (Clerk's recommended resource-level
+ * check): if there's no signed-in user we redirect, so the route is safe even if
+ * the proxy matcher ever diverges. `currentUser()` runs on the server and never
+ * exposes secrets to the client. Real product data will hang off this user in
+ * later phases.
  */
 export default async function DashboardPage() {
   const user = await currentUser();
-  const name = user?.firstName ?? "Athlete";
+  if (!user) {
+    redirect("/sign-in?redirect_url=/dashboard");
+  }
+
+  const name = user.firstName ?? "Athlete";
 
   return (
     <main className="flex flex-1 flex-col items-center justify-center bg-zinc-950 px-6 py-16 text-zinc-100">

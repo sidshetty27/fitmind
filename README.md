@@ -52,8 +52,8 @@ See [`docs/architecture.md`](docs/architecture.md) for how these fit together an
 
 ```
 FitMind/
-├── frontend/        # Next.js + TypeScript app (Phase 1)
-├── backend/         # FastAPI service (Phase 1)
+├── frontend/        # Next.js + TypeScript app (Phases 1–2)
+├── backend/         # FastAPI service + SQLAlchemy models + Alembic (Phases 1, 3)
 ├── docs/            # Architecture, database, and API documentation
 │   ├── architecture.md
 │   └── database.md
@@ -68,9 +68,9 @@ FitMind/
 This project is built in incremental, reviewable milestones:
 
 - **Phase 0 — Foundation** ✅ Folder structure, Git, README, docs
-- **Phase 1 — Scaffolding** Next.js + FastAPI, connected and verified
-- **Phase 2 — Auth** Clerk, user accounts, protected routes
-- **Phase 3 — Database** PostgreSQL schema, SQLAlchemy ORM, Alembic migrations
+- **Phase 1 — Scaffolding** ✅ Next.js + FastAPI, connected and verified
+- **Phase 2 — Auth** ✅ Clerk, user accounts, protected routes
+- **Phase 3 — Database** ✅ PostgreSQL schema, SQLAlchemy ORM, Alembic migrations
 - **Phase 4 — Core API** Workout & exercise CRUD, REST endpoints
 - **Phase 5 — Dashboard** Charts and analytics
 - **Phase 6 — AI** Workout analysis, recommendations, weekly plan generation

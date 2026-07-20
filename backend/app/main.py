@@ -1,15 +1,34 @@
 """FastAPI application entry point.
 
-Phase 1 goal: a minimal, correctly-configured API that the Next.js frontend can
-reach. Auth, database, AI, and billing routers are mounted in later phases.
+Phase 1 gave us a minimal API the Next.js frontend can reach. Phase 3 adds the
+database layer: models, migrations, and a readiness probe. Domain routers (auth,
+workouts, AI, billing) mount in later phases.
 """
+
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.routes import health
 from app.core.config import settings
+from app.db.session import engine
 
-app = FastAPI(title=settings.app_name, version="0.1.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Own the engine's lifecycle.
+
+    Nothing to do on startup — the pool connects lazily on first use, so eager
+    connecting would only make the app fail to boot during a transient database
+    blip. On shutdown we dispose the pool so connections are closed politely
+    rather than left for the server to time out.
+    """
+    yield
+    await engine.dispose()
+
+
+app = FastAPI(title=settings.app_name, version="0.3.0", lifespan=lifespan)
 
 # CORS: the browser blocks cross-origin requests unless the API explicitly allows
 # the frontend origin. We drive the allow-list from settings so prod can differ.
@@ -21,14 +40,4 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-@app.get("/health", tags=["system"])
-def health() -> dict[str, str]:
-    """Liveness probe used by deploy platforms and our own smoke tests."""
-    return {"status": "ok", "service": "fitmind-api", "environment": settings.environment}
-
-
-@app.get("/api/ping", tags=["system"])
-def ping() -> dict[str, str]:
-    """Trivial endpoint the frontend calls in Phase 1 to prove connectivity."""
-    return {"message": "pong from FastAPI"}
+app.include_router(health.router)

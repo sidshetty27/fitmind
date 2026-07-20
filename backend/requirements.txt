@@ -1,5 +1,17 @@
-# FastAPI core (Phase 1). Database/AI/Stripe deps are added in later phases.
+# FastAPI core (Phase 1). AI/Stripe deps are added in later phases.
 fastapi==0.115.6
 uvicorn[standard]==0.34.0
 pydantic-settings==2.7.1
 python-dotenv==1.0.1
+
+# Database (Phase 3)
+sqlalchemy[asyncio]==2.0.36
+alembic==1.14.0
+# psycopg 3, binary wheel: no local libpq/build toolchain required, and one
+# driver serves both the async app engine and the sync Alembic engine.
+psycopg[binary]==3.2.3
+
+# Test tooling (Phase 3 verification)
+pytest==8.3.4
+pytest-asyncio==0.25.0
+httpx==0.28.1

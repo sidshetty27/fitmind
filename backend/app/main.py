@@ -1,8 +1,10 @@
 """FastAPI application entry point.
 
-Phase 1 gave us a minimal API the Next.js frontend can reach. Phase 3 adds the
-database layer: models, migrations, and a readiness probe. Domain routers (auth,
-workouts, AI, billing) mount in later phases.
+Phase 1 gave us a minimal API the Next.js frontend can reach. Phase 3 added the
+database layer: models, migrations, and a readiness probe. Phase 4 mounts the core
+domain: Clerk-authenticated CRUD for the profile, workouts, progress, and the
+read-only exercise catalog, plus the Clerk user-sync webhook. AI and billing
+routers mount in later phases.
 """
 
 from contextlib import asynccontextmanager
@@ -10,7 +12,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import health
+from app.api.routes import exercises, health, me, progress, webhooks, workouts
 from app.core.config import settings
 from app.db.session import engine
 
@@ -28,7 +30,7 @@ async def lifespan(app: FastAPI):
     await engine.dispose()
 
 
-app = FastAPI(title=settings.app_name, version="0.3.0", lifespan=lifespan)
+app = FastAPI(title=settings.app_name, version="0.4.0", lifespan=lifespan)
 
 # CORS: the browser blocks cross-origin requests unless the API explicitly allows
 # the frontend origin. We drive the allow-list from settings so prod can differ.
@@ -41,3 +43,8 @@ app.add_middleware(
 )
 
 app.include_router(health.router)
+app.include_router(me.router)
+app.include_router(exercises.router)
+app.include_router(workouts.router)
+app.include_router(progress.router)
+app.include_router(webhooks.router)

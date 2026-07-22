@@ -11,7 +11,16 @@ alembic==1.14.0
 # driver serves both the async app engine and the sync Alembic engine.
 psycopg[binary]==3.2.3
 
-# Test tooling (Phase 3 verification)
+# Auth (Phase 4)
+# PyJWT verifies Clerk's RS256 session tokens against their JWKS; the [crypto]
+# extra pulls in `cryptography` for RSA signature checking. Svix webhook
+# signatures are verified with the standard library (see app/core/svix.py), so no
+# svix package is needed.
+pyjwt[crypto]==2.10.1
+# HTTP client — used at runtime for the Clerk Backend API email fallback, and by
+# the test suite's in-process ASGI client.
+httpx==0.28.1
+
+# Test tooling
 pytest==8.3.4
 pytest-asyncio==0.25.0
-httpx==0.28.1

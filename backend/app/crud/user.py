@@ -25,11 +25,14 @@ with no row and every one of their requests failing.
 
 import uuid
 
+from sqlalchemy import delete as sa_delete
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql import func
 
 from app.models.user import User
+from app.schemas.user import UserUpdate
 
 
 async def get_user_by_clerk_id(db: AsyncSession, clerk_id: str) -> User | None:
@@ -83,3 +86,53 @@ async def get_or_create_user_by_clerk_id(
         raise RuntimeError(f"Could not create or load user for clerk_id={clerk_id!r}")
 
     return user
+
+
+async def update_user_profile(db: AsyncSession, *, user: User, data: UserUpdate) -> User:
+    """Apply a partial profile update — only the fields the client actually sent.
+
+    `exclude_unset` is what makes PATCH mean PATCH: an omitted field is left as-is,
+    while an explicit `null` clears it. These are the columns FitMind owns; Clerk's
+    fields (email) are synced separately and not editable here.
+    """
+    for field, value in data.model_dump(exclude_unset=True).items():
+        setattr(user, field, value)
+    await db.commit()
+    return user
+
+
+async def sync_user_from_clerk(
+    db: AsyncSession, *, clerk_id: str, email: str, name: str | None
+) -> User:
+    """Upsert a user from an authoritative Clerk webhook (`user.created`/`updated`).
+
+    Unlike JIT provisioning — which uses DO NOTHING so it never fights local edits —
+    this is the one place DO UPDATE is correct: the event *is* Clerk telling us the
+    canonical email/name changed, so we write them through (and bump `updated_at`,
+    which a core upsert does not do on its own). Profile fields FitMind owns
+    (goal, height, ...) are untouched.
+    """
+    stmt = (
+        pg_insert(User)
+        .values(clerk_id=clerk_id, email=email, name=name)
+        .on_conflict_do_update(
+            index_elements=["clerk_id"],
+            set_={"email": email, "name": name, "updated_at": func.now()},
+        )
+        .returning(User)
+    )
+    result = await db.execute(stmt)
+    user = result.scalar_one()
+    await db.commit()
+    return user
+
+
+async def delete_user_by_clerk_id(db: AsyncSession, *, clerk_id: str) -> bool:
+    """Delete a user (and, by DB CASCADE, all their data) on a `user.deleted` event.
+
+    Returns whether a row was removed, so the webhook can be idempotent: a repeated
+    delivery for an already-deleted user is a no-op success, not an error.
+    """
+    result = await db.execute(sa_delete(User).where(User.clerk_id == clerk_id))
+    await db.commit()
+    return result.rowcount > 0

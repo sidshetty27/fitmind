@@ -71,7 +71,7 @@ This project is built in incremental, reviewable milestones:
 - **Phase 1 — Scaffolding** ✅ Next.js + FastAPI, connected and verified
 - **Phase 2 — Auth** ✅ Clerk, user accounts, protected routes
 - **Phase 3 — Database** ✅ PostgreSQL schema, SQLAlchemy ORM, Alembic migrations
-- **Phase 4 — Core API** Workout & exercise CRUD, REST endpoints
+- **Phase 4 — Core API** ✅ Clerk-authenticated CRUD (profile, workouts, progress), exercise catalog, user-sync webhook
 - **Phase 5 — Dashboard** Charts and analytics
 - **Phase 6 — AI** Workout analysis, recommendations, weekly plan generation
 - **Phase 7 — Billing** Premium gating + Stripe subscriptions

@@ -64,6 +64,40 @@ class Settings(BaseSettings):
     # server has already closed.
     db_pool_recycle_seconds: int = 1800
 
+    # ---------- Clerk authentication (Phase 4) ----------
+    # The backend does NOT talk to Clerk to check a session — it verifies the JWT
+    # the frontend sends against Clerk's published public keys (JWKS). That keeps
+    # the auth hot path a local signature check, with no per-request round trip to
+    # Clerk.
+    #
+    # `clerk_issuer` is the `iss` claim Clerk stamps into every token — your
+    # Frontend API URL, e.g. https://your-app.clerk.accounts.dev (dev) or your
+    # custom domain (prod). Find it in Clerk Dashboard → API keys → "Frontend API
+    # URL". Left optional so the app (and its tests) still boot without it; the
+    # first *authenticated* request then fails loudly if it is missing.
+    clerk_issuer: str | None = None
+
+    # JWKS endpoint. Defaults to `{issuer}/.well-known/jwks.json`, which is where
+    # Clerk publishes it — only set this to override (e.g. a proxy).
+    clerk_jwks_url: str | None = None
+
+    # Optional hardening: the `azp` (authorized party) claim is the origin that
+    # requested the token. Restricting it to your known frontends blocks a token
+    # minted for some other Clerk app/origin from being replayed here. Comma-
+    # separated; empty disables the check.
+    clerk_authorized_parties: str = ""
+
+    # Clerk Backend API secret (`sk_...`). Only used as a *fallback*: if a token
+    # carries no email claim, we fetch the user's email from Clerk so JIT
+    # provisioning can satisfy the NOT NULL `users.email`. Configure a JWT
+    # template with an `email` claim to avoid the round trip entirely (see README).
+    clerk_secret_key: str | None = None
+
+    # Svix signing secret (`whsec_...`) for the Clerk webhook. Without it the
+    # webhook endpoint refuses every delivery — an unverified webhook is an open
+    # door to forged user data.
+    clerk_webhook_secret: str | None = None
+
     @field_validator("database_url", "migration_database_url")
     @classmethod
     def _coerce_driver(cls, value: str | None) -> str | None:
@@ -78,6 +112,20 @@ class Settings(BaseSettings):
     def effective_migration_url(self) -> str:
         """URL Alembic should use — the direct connection when one is configured."""
         return self.migration_database_url or self.database_url
+
+    @property
+    def effective_clerk_jwks_url(self) -> str | None:
+        """Where to fetch Clerk's signing keys, derived from the issuer if unset."""
+        if self.clerk_jwks_url:
+            return self.clerk_jwks_url
+        if self.clerk_issuer:
+            return f"{self.clerk_issuer.rstrip('/')}/.well-known/jwks.json"
+        return None
+
+    @property
+    def clerk_authorized_parties_list(self) -> list[str]:
+        """Parse the comma-separated `azp` allow-list into a clean list."""
+        return [p.strip() for p in self.clerk_authorized_parties.split(",") if p.strip()]
 
 
 # A single importable settings instance used across the app.

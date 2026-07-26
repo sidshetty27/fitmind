@@ -12,6 +12,7 @@ from app.models.enums import ExperienceLevel, Goal, pg_enum
 if TYPE_CHECKING:  # avoid circular imports at runtime; relationships use strings
     from app.models.progress import ProgressEntry
     from app.models.workout import Workout
+    from app.models.workout_template import WorkoutTemplate
 
 
 class User(Base, UUIDPrimaryKeyMixin, TimestampMixin):
@@ -68,6 +69,9 @@ class User(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         back_populates="user", cascade="all, delete-orphan", passive_deletes=True
     )
     progress_entries: Mapped[list["ProgressEntry"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan", passive_deletes=True
+    )
+    workout_templates: Mapped[list["WorkoutTemplate"]] = relationship(
         back_populates="user", cascade="all, delete-orphan", passive_deletes=True
     )
 

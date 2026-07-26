@@ -11,8 +11,14 @@ python -m venv .venv
 pip install -r requirements.txt
 cp .env.example .env            # then edit values — DATABASE_URL is required
 alembic upgrade head            # create the schema + seed the exercise catalog
-uvicorn app.main:app --reload --port 8000
+python run.py                   # start the API on http://localhost:8000
 ```
+
+> **Start the server with `python run.py`, not `uvicorn app.main:app` directly.**
+> On Windows, psycopg3's async driver requires the SelectorEventLoop, and the loop
+> policy must be set before uvicorn creates the loop — which `run.py` does. It's a
+> no-op on Linux/macOS, so the same command works everywhere. (Auto-reload is off
+> on Windows for the same reason; see `run.py`.)
 
 - API: http://localhost:8000
 - Interactive docs (Swagger): http://localhost:8000/docs

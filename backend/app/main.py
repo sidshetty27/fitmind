@@ -3,18 +3,37 @@
 Phase 1 gave us a minimal API the Next.js frontend can reach. Phase 3 added the
 database layer: models, migrations, and a readiness probe. Phase 4 mounts the core
 domain: Clerk-authenticated CRUD for the profile, workouts, progress, and the
-read-only exercise catalog, plus the Clerk user-sync webhook. AI and billing
-routers mount in later phases.
+read-only exercise catalog, plus the Clerk user-sync webhook. Phase 5 adds
+reusable workout templates. AI and billing routers mount in later phases.
 """
 
+import asyncio
+import sys
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import exercises, health, me, progress, webhooks, workouts
+from app.api.routes import (
+    exercises,
+    health,
+    me,
+    progress,
+    templates,
+    webhooks,
+    workouts,
+)
 from app.core.config import settings
 from app.db.session import engine
+
+# On Windows, Python's default asyncio loop is the ProactorEventLoop, which
+# psycopg3's async driver refuses to run on ("Psycopg cannot use the
+# 'ProactorEventLoop'"). The SelectorEventLoop is compatible. We set the policy at
+# import time — before uvicorn creates the event loop — so local Windows dev works
+# against Postgres. It is a no-op on the Linux hosts we deploy to (Railway/Render),
+# where the default loop already works, so production behaviour is unchanged.
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 
 @asynccontextmanager
@@ -46,5 +65,6 @@ app.include_router(health.router)
 app.include_router(me.router)
 app.include_router(exercises.router)
 app.include_router(workouts.router)
+app.include_router(templates.router)
 app.include_router(progress.router)
 app.include_router(webhooks.router)

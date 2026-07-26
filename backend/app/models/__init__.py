@@ -13,6 +13,8 @@ from app.models.progress import ProgressEntry
 from app.models.user import User
 from app.models.workout import Workout
 from app.models.workout_exercise import WorkoutExercise
+from app.models.workout_template import WorkoutTemplate
+from app.models.workout_template_exercise import WorkoutTemplateExercise
 
 __all__ = [
     "Equipment",
@@ -24,4 +26,6 @@ __all__ = [
     "User",
     "Workout",
     "WorkoutExercise",
+    "WorkoutTemplate",
+    "WorkoutTemplateExercise",
 ]

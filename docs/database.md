@@ -2,7 +2,7 @@
 
 PostgreSQL (Supabase), accessed from FastAPI via SQLAlchemy 2.0, with Alembic migrations.
 
-**Status:** implemented in Phase 3 — `users`, `exercises`, `workouts`, `workout_exercises`, `progress_entries`. The billing and AI tables sketched at the bottom land with the phases that need them.
+**Status:** implemented in Phase 3 — `users`, `exercises`, `workouts`, `workout_exercises`, `progress_entries`. Phase 5 added `workout_templates` and `workout_template_exercises`. The billing and AI tables sketched at the bottom land with the phases that need them.
 
 ## Design principles
 - **Third normal form** where it aids integrity; denormalize only with a measured reason (there is exactly one such case, noted below).
@@ -14,8 +14,11 @@ PostgreSQL (Supabase), accessed from FastAPI via SQLAlchemy 2.0, with Alembic mi
 ## Entity-relationship overview
 
 ```
-users ──1:N──► workouts ──1:N──► workout_exercises ──N:1──► exercises
-  │                                                          (shared catalog)
+users ──1:N──► workouts ──1:N──► workout_exercises ──────N:1──────► exercises
+  │                                                                 (shared catalog)
+  ├──1:N──► workout_templates ──1:N──► workout_template_exercises ──┘
+  │              (plans; applied by *copying* into a workout)
+  │
   └──1:N──► progress_entries      (bodyweight, calories, protein, sleep)
 
 later phases:
@@ -108,6 +111,27 @@ Seeded with ~32 common movements by migration `0002`, because the app is unusabl
 
 Separate from `users` because progress is a *time series* — overwriting a column destroys the data the product exists to analyze. Separate from `workouts` because these are recorded on rest days too. `UNIQUE (user_id, recorded_on)` lets "log today's weight" be a clean idempotent UPSERT instead of a read-then-write race.
 
+### `workout_templates` *(Phase 5)*
+| column      | type       | notes                                    |
+| ----------- | ---------- | ---------------------------------------- |
+| id          | uuid PK    |                                          |
+| user_id     | uuid FK    | → users.id, ON DELETE CASCADE            |
+| name        | varchar(200) | required; UNIQUE with user_id          |
+| description | text       | nullable                                 |
+
+A reusable session plan — "Push Day A".
+
+**Why a separate table rather than `workouts.is_template`.** The flag is cheaper by one table and wrong in three ways: a template has no `performed_on` (it never happened), it would pollute every history query, streak count, and volume aggregate with sessions the user did not train, and its weights are *targets* rather than facts. A plan and a record of the past are different things; conflating them means one forgotten `WHERE NOT is_template` silently corrupts a statistic.
+
+`UNIQUE (user_id, name)` is scoped to the user, not global: two people may both have a "Push Day A", and one user having two is a mistake they cannot tell apart in a picker.
+
+### `workout_template_exercises` *(Phase 5)*
+Same columns and same CHECK constraints as `workout_exercises` (`position`, `sets`, `reps`, `weight_kg`, `rpe`, `notes`), with `template_id` in place of `workout_id`. `exercise_id` is `ON DELETE RESTRICT` for the same reason.
+
+The mirroring is deliberate: **applying a template is a field-for-field copy**, with no translation layer to drift the moment either side gains a column. `sets` and `reps` are required here too, so a saved plan can always be applied — a template that cannot become a valid workout would fail at use time rather than at save time.
+
+Applying is a **copy, not a link**: `POST /api/templates/{id}/apply` creates an independent workout. Editing a template afterwards must not rewrite history already logged from it, and correcting the weight you actually hit must not corrupt the plan.
+
 ## Types
 - **`numeric`, never `float`**, for every weight and measurement. 72.4 has no exact binary representation, and accumulated drift in a strength-progression chart is indefensible when the fix is free.
 - **Native Postgres ENUMs** for closed vocabularies (`goal`, `experience_level`, `muscle_group`, `equipment`) — the database rejects typos regardless of which client wrote the row. Tradeoff: adding a value needs a migration (`ALTER TYPE ... ADD VALUE`, cheap); removing one needs a type rewrite. Open-ended vocabularies (exercise names) are a table, not an enum.
@@ -121,6 +145,9 @@ Separate from `users` because progress is a *time series* — overwriting a colu
 | `ix_workout_exercises_exercise_id` | the RESTRICT check; per-exercise history |
 | `ix_exercises_primary_muscle_group` | volume-by-muscle aggregation |
 | `uq_progress_entries_user_id_recorded_on` (constraint-backed) | progress charts by date range |
+| `ix_workout_templates_user_id` | listing one user's templates |
+| `ix_workout_template_exercises_template_id` | loading a template's exercises; cascade deletes |
+| `ix_workout_template_exercises_exercise_id` | the RESTRICT check |
 
 No index is created where a UNIQUE constraint's backing btree already covers the access pattern — a redundant index costs write throughput and buys nothing.
 

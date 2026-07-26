@@ -197,6 +197,50 @@ export type WorkoutUpdate = Partial<
   Pick<Workout, "performed_on" | "title" | "notes" | "duration_min">
 >;
 
+/**
+ * Templates mirror workouts on purpose — same exercise payload shape — so
+ * applying one is a field-for-field copy with no translation layer.
+ */
+export interface TemplateExercise extends WorkoutExerciseInput {
+  id: string;
+  exercise: Exercise;
+  position: number;
+}
+
+export interface WorkoutTemplate {
+  id: string;
+  name: string;
+  description: string | null;
+  created_at: string;
+  updated_at: string;
+  exercises: TemplateExercise[];
+}
+
+export interface TemplateListItem {
+  id: string;
+  name: string;
+  description: string | null;
+  exercise_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TemplateCreate {
+  name: string;
+  description?: string | null;
+  exercises?: WorkoutExerciseInput[];
+}
+
+export type TemplateUpdate = Partial<Pick<WorkoutTemplate, "name" | "description">>;
+
+/** The facts a plan cannot know: when it was actually performed, and for how long. */
+export interface TemplateApply {
+  performed_on: string;
+  title?: string | null;
+  notes?: string | null;
+  duration_min?: number | null;
+}
+
 export interface ProgressEntry {
   id: string;
   recorded_on: string;
@@ -223,6 +267,17 @@ export type HealthResponse = { status: string; service: string; environment: str
 
 type Token = string | null | undefined;
 
+/**
+ * Per-call options for read endpoints that a component may need to cancel.
+ *
+ * Type-ahead search fires a request per keystroke; without an abort the responses
+ * can resolve out of order and a stale result overwrites a newer one. `request()`
+ * has always forwarded `signal` to `fetch` — these helpers expose it.
+ */
+interface CallOptions {
+  signal?: AbortSignal;
+}
+
 /* ------------------------------ API surface ------------------------------ */
 
 export const api = {
@@ -241,15 +296,25 @@ export const api = {
   exercises: {
     list: (
       token: Token,
-      params?: { muscle_group?: MuscleGroup; equipment?: Equipment; search?: string },
-    ) => request<Exercise[]>("/api/exercises", { token, query: params }),
+      params?: {
+        muscle_group?: MuscleGroup;
+        equipment?: Equipment;
+        search?: string;
+        limit?: number;
+        offset?: number;
+      },
+      opts?: CallOptions,
+    ) => request<Exercise[]>("/api/exercises", { token, query: params, ...opts }),
     get: (token: Token, id: string) =>
       request<Exercise>(`/api/exercises/${id}`, { token }),
   },
 
   workouts: {
-    list: (token: Token, params?: { date_from?: string; date_to?: string; limit?: number; offset?: number }) =>
-      request<WorkoutListItem[]>("/api/workouts", { token, query: params }),
+    list: (
+      token: Token,
+      params?: { date_from?: string; date_to?: string; limit?: number; offset?: number },
+      opts?: CallOptions,
+    ) => request<WorkoutListItem[]>("/api/workouts", { token, query: params, ...opts }),
     get: (token: Token, id: string) => request<Workout>(`/api/workouts/${id}`, { token }),
     create: (token: Token, data: WorkoutCreate) =>
       request<Workout>("/api/workouts", { method: "POST", body: data, token }),
@@ -263,6 +328,40 @@ export const api = {
       }),
     delete: (token: Token, id: string) =>
       request<void>(`/api/workouts/${id}`, { method: "DELETE", token }),
+  },
+
+  templates: {
+    list: (token: Token, opts?: CallOptions) =>
+      request<TemplateListItem[]>("/api/templates", { token, ...opts }),
+    get: (token: Token, id: string) =>
+      request<WorkoutTemplate>(`/api/templates/${id}`, { token }),
+    create: (token: Token, data: TemplateCreate) =>
+      request<WorkoutTemplate>("/api/templates", {
+        method: "POST",
+        body: data,
+        token,
+      }),
+    update: (token: Token, id: string, data: TemplateUpdate) =>
+      request<WorkoutTemplate>(`/api/templates/${id}`, {
+        method: "PATCH",
+        body: data,
+        token,
+      }),
+    replaceExercises: (token: Token, id: string, exercises: WorkoutExerciseInput[]) =>
+      request<WorkoutTemplate>(`/api/templates/${id}/exercises`, {
+        method: "PUT",
+        body: { exercises },
+        token,
+      }),
+    /** Log a workout from this template. Returns the new **workout**. */
+    apply: (token: Token, id: string, data: TemplateApply) =>
+      request<Workout>(`/api/templates/${id}/apply`, {
+        method: "POST",
+        body: data,
+        token,
+      }),
+    delete: (token: Token, id: string) =>
+      request<void>(`/api/templates/${id}`, { method: "DELETE", token }),
   },
 
   progress: {

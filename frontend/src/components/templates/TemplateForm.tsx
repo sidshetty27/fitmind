@@ -210,7 +210,14 @@ export function TemplateForm({
   const volume = totalVolume(draft.exercises);
 
   return (
-    <form onSubmit={submit} className="mx-auto w-full max-w-3xl space-y-6">
+    // noValidate: `required` stays for semantics, but the browser's native
+    // validation would otherwise block submit before `submit` runs, so our own
+    // messages (and the aria-invalid wiring) would never appear.
+    <form
+      onSubmit={submit}
+      noValidate
+      className="mx-auto w-full max-w-3xl space-y-6"
+    >
       {formError && <Alert title="Couldn't save">{formError}</Alert>}
       {saved && !formError && (
         <Alert tone="success" title="Template saved">

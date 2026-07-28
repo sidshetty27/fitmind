@@ -72,8 +72,9 @@ This project is built in incremental, reviewable milestones:
 - **Phase 2 — Auth** ✅ Clerk, user accounts, protected routes
 - **Phase 3 — Database** ✅ PostgreSQL schema, SQLAlchemy ORM, Alembic migrations
 - **Phase 4 — Core API** ✅ Clerk-authenticated CRUD (profile, workouts, progress), exercise catalog, user-sync webhook
-- **Phase 5 — Dashboard** Charts and analytics
-- **Phase 6 — AI** Workout analysis, recommendations, weekly plan generation
+- **Phase 5 — Workout logging** ✅ Dashboard shell, workout CRUD UI, exercise search, reusable templates
+- **Phase 6 — AI** Training-history aggregation, workout analysis, recommendations, weekly plan generation
+- **Phase 6.5 — Progress** Charts and analytics over the aggregation layer (the Progress page)
 - **Phase 7 — Billing** Premium gating + Stripe subscriptions
 - **Phase 8 — Deployment** Production config, testing, performance
 

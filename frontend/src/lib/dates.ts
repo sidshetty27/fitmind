@@ -47,6 +47,26 @@ export function startOfWeekISO(): string {
   return toISODate(now);
 }
 
+/**
+ * Every Monday from `startISO` to `endISO` inclusive, as `YYYY-MM-DD`.
+ *
+ * The analytics API omits weeks with no training rather than zero-filling them —
+ * it cannot tell "rested" from "outside the window", but the caller knows the
+ * window, so the axis is built here. Without this a three-week layoff would
+ * silently close up and the chart would read as unbroken training.
+ */
+export function weeksBetween(startISO: string, endISO: string): string[] {
+  const end = parseLocalDate(endISO);
+  const cursor = parseLocalDate(startISO);
+  const weeks: string[] = [];
+  // Guard rather than trust: a bad range must not spin forever in a render.
+  while (cursor <= end && weeks.length < 106) {
+    weeks.push(toISODate(cursor));
+    cursor.setDate(cursor.getDate() + 7);
+  }
+  return weeks;
+}
+
 /** "Mon, 26 Jul 2026" — the long form, for detail headers. */
 export function formatLongDate(iso: string): string {
   return parseLocalDate(iso).toLocaleDateString(undefined, {

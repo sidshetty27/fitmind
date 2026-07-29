@@ -33,6 +33,26 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * A server-side `Decimal` as it actually arrives on the wire: a **string**.
+ *
+ * Pydantic serialises `Decimal` to a JSON string rather than a number, and that is
+ * the right call — it preserves the exact stored scale, so `60.50` survives the trip
+ * instead of becoming a float that renders as `60.5`. The cost is that these fields
+ * are never safe to do arithmetic on directly; `toNumber()` below is the one way in.
+ *
+ * Typing them as `number` (as this module briefly did) compiles fine and then fails
+ * at runtime the first time something calls `.toFixed()` on one.
+ */
+export type DecimalString = string;
+
+/** Parse a wire `Decimal`. `null` in, `null` out — never a silent 0. */
+export function toNumber(value: DecimalString | null): number | null {
+  if (value === null) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 type Query = Record<string, string | number | boolean | null | undefined>;
 
 interface RequestOptions {
@@ -158,10 +178,19 @@ export interface WorkoutExerciseInput {
   notes?: string | null;
 }
 
-export interface WorkoutExercise extends WorkoutExerciseInput {
+/**
+ * Note the narrowing on the way *back*: the API accepts `weight_kg` / `rpe` as
+ * numbers but returns them as `Decimal` strings, so a read model cannot reuse the
+ * input's `number`. Existing callers only ever `String(...)` these, which is why the
+ * old `number` typing never broke — it was still a lie waiting for the first
+ * arithmetic.
+ */
+export interface WorkoutExercise extends Omit<WorkoutExerciseInput, "weight_kg" | "rpe"> {
   id: string;
   exercise: Exercise;
   position: number;
+  weight_kg: DecimalString | null;
+  rpe: DecimalString | null;
 }
 
 export interface Workout {
@@ -201,10 +230,13 @@ export type WorkoutUpdate = Partial<
  * Templates mirror workouts on purpose — same exercise payload shape — so
  * applying one is a field-for-field copy with no translation layer.
  */
-export interface TemplateExercise extends WorkoutExerciseInput {
+export interface TemplateExercise
+  extends Omit<WorkoutExerciseInput, "weight_kg" | "rpe"> {
   id: string;
   exercise: Exercise;
   position: number;
+  weight_kg: DecimalString | null;
+  rpe: DecimalString | null;
 }
 
 export interface WorkoutTemplate {
@@ -260,6 +292,66 @@ export interface ProgressUpsert {
   protein_g?: number | null;
   sleep_hours?: number | null;
   notes?: string | null;
+}
+
+/**
+ * Derived training data (Phase 6). Nothing here is stored server-side — it is
+ * computed per request from logged workouts.
+ *
+ * Numeric fields arrive as JSON numbers but are `Decimal` on the server, and a
+ * `null` always means *not applicable* (bodyweight work has no load, one session
+ * has no trend), never zero. Rendering `null` as `0` would flatten exactly the
+ * signals these charts exist to show.
+ */
+export interface ExerciseSessionPoint {
+  workout_id: string;
+  performed_on: string;
+  sets: number;
+  reps: number;
+  weight_kg: DecimalString | null;
+  rpe: DecimalString | null;
+  volume_kg: DecimalString | null;
+  estimated_one_rm: DecimalString | null;
+  total_reps: number;
+}
+
+export interface ExerciseHistory {
+  exercise_id: string;
+  exercise_name: string;
+  points: ExerciseSessionPoint[];
+  session_count: number;
+  best_estimated_one_rm: DecimalString | null;
+  /** Signed: a negative value is a real finding, not an error. */
+  one_rm_change_pct: DecimalString | null;
+}
+
+export interface WeekVolume {
+  week_start: string;
+  volume_kg: DecimalString;
+  total_reps: number;
+  session_count: number;
+}
+
+export interface PersonalRecord {
+  exercise_id: string;
+  exercise_name: string;
+  heaviest_weight_kg: DecimalString | null;
+  heaviest_weight_on: string | null;
+  best_estimated_one_rm: DecimalString | null;
+  best_estimated_one_rm_on: string | null;
+  best_session_volume_kg: DecimalString | null;
+  best_session_volume_on: string | null;
+  session_count: number;
+  last_performed_on: string;
+}
+
+export interface TrainingSummary {
+  window_start: string;
+  window_end: string;
+  workout_count: number;
+  /** Weeks with no training are **absent**, not zero-filled — fill the axis client-side. */
+  weekly_volume: WeekVolume[];
+  exercises: ExerciseHistory[];
 }
 
 export type PingResponse = { message: string };
@@ -362,6 +454,25 @@ export const api = {
       }),
     delete: (token: Token, id: string) =>
       request<void>(`/api/templates/${id}`, { method: "DELETE", token }),
+  },
+
+  analytics: {
+    /** One round trip for the whole Progress page — the charts share a window. */
+    summary: (
+      token: Token,
+      params?: { weeks?: number; exercise_limit?: number },
+      opts?: CallOptions,
+    ) => request<TrainingSummary>("/api/analytics/summary", { token, query: params, ...opts }),
+    volume: (token: Token, params?: { weeks?: number }) =>
+      request<WeekVolume[]>("/api/analytics/volume", { token, query: params }),
+    records: (token: Token) =>
+      request<PersonalRecord[]>("/api/analytics/records", { token }),
+    /** 404s when the caller has never logged this movement. */
+    exercise: (token: Token, exerciseId: string, params?: { weeks?: number }) =>
+      request<ExerciseHistory>(`/api/analytics/exercises/${exerciseId}`, {
+        token,
+        query: params,
+      }),
   },
 
   progress: {

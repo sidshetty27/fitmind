@@ -21,7 +21,8 @@ from app.crud.analysis import (
     _week_start,
     window_start,
 )
-from app.schemas.analysis import ExerciseSessionPoint
+from app.models.enums import MuscleGroup
+from app.schemas.analysis import ExerciseHistory, ExerciseSessionPoint
 
 # ------------------------------------------------------------- estimated 1RM
 
@@ -158,9 +159,17 @@ def _point(
     )
 
 
+def _history(
+    name: str,
+    points: list[ExerciseSessionPoint],
+    group: MuscleGroup = MuscleGroup.CHEST,
+) -> ExerciseHistory:
+    """`_build_history` with an id and a muscle group these tests do not care about."""
+    return _build_history(uuid.uuid4(), name, group, points)
+
+
 def test_history_reports_best_and_signed_trend() -> None:
-    history = _build_history(
-        uuid.uuid4(),
+    history = _history(
         "Barbell Bench Press",
         [
             _point(date(2026, 6, 1), Decimal("60"), 5),   # 70.00
@@ -175,8 +184,7 @@ def test_history_reports_best_and_signed_trend() -> None:
 
 def test_history_trend_spans_estimable_points_when_the_window_ends_bodyweight() -> None:
     """The window opening or closing on an unusable set must not erase a real trend."""
-    history = _build_history(
-        uuid.uuid4(),
+    history = _history(
         "Barbell Bench Press",
         [
             _point(date(2026, 6, 1), None, 10),           # no estimate
@@ -190,16 +198,13 @@ def test_history_trend_spans_estimable_points_when_the_window_ends_bodyweight() 
 
 def test_history_with_one_estimable_point_has_no_trend() -> None:
     """One point is a reading, not a direction."""
-    history = _build_history(
-        uuid.uuid4(), "Dip", [_point(date(2026, 6, 1), Decimal("20"), 8)]
-    )
+    history = _history("Dip", [_point(date(2026, 6, 1), Decimal("20"), 8)])
     assert history.best_estimated_one_rm is not None
     assert history.one_rm_change_pct is None
 
 
 def test_bodyweight_only_history_still_counts_sessions() -> None:
-    history = _build_history(
-        uuid.uuid4(),
+    history = _history(
         "Pull-up",
         [_point(date(2026, 6, 1), None, 8), _point(date(2026, 6, 8), None, 10)],
     )
@@ -212,8 +217,7 @@ def test_two_movements_in_one_session_count_as_one_session() -> None:
     """A second bench slot in the same workout is legitimate training, and the
     model deliberately allows it — it must not inflate the session count."""
     same_workout = uuid.uuid4()
-    history = _build_history(
-        uuid.uuid4(),
+    history = _history(
         "Barbell Bench Press",
         [
             _point(date(2026, 6, 1), Decimal("60"), 5, workout_id=same_workout),

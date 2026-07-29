@@ -7,6 +7,7 @@ model that is never imported is invisible to autogenerate, and the resulting
 migration silently omits its table.
 """
 
+from app.models.ai_analysis import AiAnalysis
 from app.models.enums import Equipment, ExperienceLevel, Goal, MuscleGroup
 from app.models.exercise import Exercise
 from app.models.progress import ProgressEntry
@@ -17,6 +18,7 @@ from app.models.workout_template import WorkoutTemplate
 from app.models.workout_template_exercise import WorkoutTemplateExercise
 
 __all__ = [
+    "AiAnalysis",
     "Equipment",
     "Exercise",
     "ExperienceLevel",

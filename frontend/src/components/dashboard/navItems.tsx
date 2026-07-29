@@ -60,7 +60,6 @@ export const NAV_ITEMS: NavItem[] = [
   {
     href: "/dashboard/progress",
     label: "Progress",
-    soon: true,
     icon: (
       <svg {...iconProps}>
         <path d="M3 20h18M6 16l4-5 3.5 3L18 8" />

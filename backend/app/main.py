@@ -4,7 +4,9 @@ Phase 1 gave us a minimal API the Next.js frontend can reach. Phase 3 added the
 database layer: models, migrations, and a readiness probe. Phase 4 mounts the core
 domain: Clerk-authenticated CRUD for the profile, workouts, progress, and the
 read-only exercise catalog, plus the Clerk user-sync webhook. Phase 5 adds
-reusable workout templates. AI and billing routers mount in later phases.
+reusable workout templates. Phase 6 mounts the analytics router, which derives
+charts and records from logged workouts rather than storing anything of its own.
+AI and billing routers mount in later phases.
 """
 
 import asyncio
@@ -15,6 +17,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import (
+    analytics,
     exercises,
     health,
     me,
@@ -67,4 +70,5 @@ app.include_router(exercises.router)
 app.include_router(workouts.router)
 app.include_router(templates.router)
 app.include_router(progress.router)
+app.include_router(analytics.router)
 app.include_router(webhooks.router)

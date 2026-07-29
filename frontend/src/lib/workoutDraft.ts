@@ -99,7 +99,7 @@ function decimalPlaces(value: string): number {
 function checkPositiveInt(raw: string, label: string): string | null {
   const value = raw.trim();
   if (!value) return `${label} is required.`;
-  if (!/^\d+$/.test(value)) return `${label} must be a whole number.`;
+  if (!/^-?\d+$/.test(value)) return `${label} must be a whole number.`;
   const parsed = Number(value);
   if (parsed <= 0) return `${label} must be greater than 0.`;
   if (parsed > 1000) return `${label} looks too large.`;
@@ -114,7 +114,7 @@ function checkPositiveInt(raw: string, label: string): string | null {
 function checkWeight(raw: string): string | null {
   const value = raw.trim();
   if (!value) return null;
-  if (!/^\d*\.?\d+$/.test(value)) return "Weight must be a number.";
+  if (!/^-?\d*\.?\d+$/.test(value)) return "Weight must be a number.";
   if (decimalPlaces(value) > 2) return "Weight can have at most 2 decimal places.";
   const parsed = Number(value);
   if (parsed < 0) return "Weight cannot be negative.";
@@ -126,7 +126,7 @@ function checkWeight(raw: string): string | null {
 function checkRpe(raw: string): string | null {
   const value = raw.trim();
   if (!value) return null;
-  if (!/^\d*\.?\d+$/.test(value)) return "RPE must be a number.";
+  if (!/^-?\d*\.?\d+$/.test(value)) return "RPE must be a number.";
   if (decimalPlaces(value) > 1) return "RPE can have at most 1 decimal place.";
   const parsed = Number(value);
   if (parsed < 1 || parsed > 10) return "RPE must be between 1 and 10.";

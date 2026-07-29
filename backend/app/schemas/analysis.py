@@ -63,6 +63,36 @@ class WeekVolume(BaseModel):
     session_count: NonNegativeInt
 
 
+class PersonalRecord(BaseModel):
+    """The best a user has ever done on one movement, and when.
+
+    Three records rather than one because they answer different questions and can
+    land in different sessions: the heaviest bar loaded, the best estimated max
+    (which a rep PR can set without touching the heaviest weight), and the biggest
+    single session of work. Each carries its own date — a PR board whose entries
+    all shared one date would be describing a session, not a record.
+
+    Every field is optional for the same reason `metrics` returns `None`: a
+    bodyweight-only movement has no weight or 1RM record, but it still has a
+    session count and a last-performed date worth showing.
+    """
+
+    exercise_id: uuid.UUID
+    exercise_name: str
+
+    heaviest_weight_kg: Decimal | None = None
+    heaviest_weight_on: date | None = None
+
+    best_estimated_one_rm: Decimal | None = None
+    best_estimated_one_rm_on: date | None = None
+
+    best_session_volume_kg: Decimal | None = None
+    best_session_volume_on: date | None = None
+
+    session_count: NonNegativeInt
+    last_performed_on: date
+
+
 class TrainingSummary(BaseModel):
     """The whole aggregation layer's output for one user over one window.
 
@@ -81,6 +111,7 @@ class TrainingSummary(BaseModel):
 __all__ = [
     "ExerciseHistory",
     "ExerciseSessionPoint",
+    "PersonalRecord",
     "TrainingSummary",
     "WeekVolume",
 ]

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import uuid
 from collections import defaultdict
+from collections.abc import Callable
 from datetime import date, timedelta
 from decimal import Decimal
 
@@ -29,6 +30,7 @@ from app.models.workout_exercise import WorkoutExercise
 from app.schemas.analysis import (
     ExerciseHistory,
     ExerciseSessionPoint,
+    PersonalRecord,
     TrainingSummary,
     WeekVolume,
 )
@@ -43,6 +45,16 @@ DEFAULT_WINDOW_WEEKS = 12
 def _week_start(day: date) -> date:
     """The Monday of `day`'s ISO week — the bucket key for weekly rollups."""
     return day - timedelta(days=day.weekday())
+
+
+def window_start(today: date, weeks: int) -> date:
+    """First day of the trailing `weeks`-week window ending in `today`'s week.
+
+    Aligned to a Monday, and shared by every caller that needs a window boundary,
+    so a filter cutoff and a chart's first bucket can never disagree by a day.
+    `weeks=1` means the current week alone.
+    """
+    return _week_start(today) - timedelta(weeks=weeks - 1)
 
 
 async def exercise_history(
@@ -138,6 +150,108 @@ def _build_history(
     )
 
 
+def _best_point(
+    points: list[ExerciseSessionPoint],
+    value_of: Callable[[ExerciseSessionPoint], Decimal | None],
+) -> tuple[Decimal | None, date | None]:
+    """The highest value `value_of` yields across `points`, and the day it happened.
+
+    `points` arrives oldest-first and the comparison is strict, so a record that is
+    equalled later keeps the *earlier* date — the day it was first achieved, which
+    is what a PR board means. Entries the metric does not apply to (`None`) are
+    skipped rather than treated as zero.
+    """
+    best_value: Decimal | None = None
+    best_on: date | None = None
+    for point in points:
+        value = value_of(point)
+        if value is None:
+            continue
+        if best_value is None or value > best_value:
+            best_value, best_on = value, point.performed_on
+    return best_value, best_on
+
+
+def _session_volumes(points: list[ExerciseSessionPoint]) -> list[tuple[date, Decimal]]:
+    """Loaded volume for this movement per session, oldest first.
+
+    Grouped by workout because the model allows a movement to appear twice in one
+    session (a second bench slot). Those rows are one session's work and must be
+    summed before comparing, or a split session would under-report against a
+    single-slot one. Sessions with no loaded work contribute nothing.
+    """
+    totals: dict[uuid.UUID, Decimal] = {}
+    days: dict[uuid.UUID, date] = {}
+    order: list[uuid.UUID] = []
+    for point in points:
+        if point.volume_kg is None:
+            continue
+        if point.workout_id not in totals:
+            totals[point.workout_id] = Decimal("0.00")
+            days[point.workout_id] = point.performed_on
+            order.append(point.workout_id)
+        totals[point.workout_id] += point.volume_kg
+    return [(days[wid], totals[wid]) for wid in order]
+
+
+def _build_record(
+    exercise_id: uuid.UUID, name: str, points: list[ExerciseSessionPoint]
+) -> PersonalRecord:
+    """Turn one movement's ordered points into its record card."""
+    heaviest, heaviest_on = _best_point(points, lambda p: p.weight_kg)
+    best_one_rm, best_one_rm_on = _best_point(points, lambda p: p.estimated_one_rm)
+
+    best_volume: Decimal | None = None
+    best_volume_on: date | None = None
+    for day, total in _session_volumes(points):
+        if best_volume is None or total > best_volume:
+            best_volume, best_volume_on = total, day
+
+    return PersonalRecord(
+        exercise_id=exercise_id,
+        exercise_name=name,
+        heaviest_weight_kg=heaviest,
+        heaviest_weight_on=heaviest_on,
+        best_estimated_one_rm=best_one_rm,
+        best_estimated_one_rm_on=best_one_rm_on,
+        best_session_volume_kg=best_volume,
+        best_session_volume_on=best_volume_on,
+        session_count=len({p.workout_id for p in points}),
+        last_performed_on=max(p.performed_on for p in points),
+    )
+
+
+async def personal_records(
+    db: AsyncSession,
+    *,
+    user_id: uuid.UUID,
+    since: date | None = None,
+) -> list[PersonalRecord]:
+    """Every movement the user has logged, with its bests. Most recent first.
+
+    All-time by default: a personal record that expires when it leaves a rolling
+    window is not a personal record. `since` exists for the "bests this block"
+    question, which is a different one and asked explicitly.
+
+    Ordered by most recently trained rather than alphabetically — the movements a
+    user is working on now are the ones they came to the page to see.
+    """
+    histories = await exercise_history(
+        db, user_id=user_id, since=since, limit_exercises=None
+    )
+    records = [
+        _build_record(h.exercise_id, h.exercise_name, h.points)
+        for h in histories
+        if h.points
+    ]
+    # Two passes, not one reversed sort: reversing a (date, name) key would also
+    # flip the name tiebreak to Z-A. Sorting by name first and then stably by date
+    # descending keeps same-day movements alphabetical.
+    records.sort(key=lambda r: r.exercise_name)
+    records.sort(key=lambda r: r.last_performed_on, reverse=True)
+    return records
+
+
 async def weekly_volume(
     db: AsyncSession, *, user_id: uuid.UUID, since: date | None = None
 ) -> list[WeekVolume]:
@@ -198,22 +312,22 @@ async def training_summary(
     `today` is a parameter rather than a `date.today()` call so the window is
     reproducible in tests and identical across a request that straddles midnight.
     """
-    window_start = _week_start(today) - timedelta(weeks=weeks - 1)
+    start = window_start(today, weeks)
 
     count_stmt = select(func.count(Workout.id)).where(
         Workout.user_id == user_id,
-        Workout.performed_on >= window_start,
+        Workout.performed_on >= start,
         Workout.performed_on <= today,
     )
     workout_count = (await db.execute(count_stmt)).scalar_one()
 
     return TrainingSummary(
-        window_start=window_start,
+        window_start=start,
         window_end=today,
         workout_count=workout_count,
-        weekly_volume=await weekly_volume(db, user_id=user_id, since=window_start),
+        weekly_volume=await weekly_volume(db, user_id=user_id, since=start),
         exercises=await exercise_history(
-            db, user_id=user_id, since=window_start, limit_exercises=limit_exercises
+            db, user_id=user_id, since=start, limit_exercises=limit_exercises
         ),
     )
 
@@ -222,6 +336,8 @@ __all__ = [
     "DEFAULT_EXERCISE_LIMIT",
     "DEFAULT_WINDOW_WEEKS",
     "exercise_history",
+    "personal_records",
     "training_summary",
     "weekly_volume",
+    "window_start",
 ]

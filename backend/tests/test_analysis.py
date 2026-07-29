@@ -14,7 +14,13 @@ from decimal import Decimal
 import pytest
 
 from app.analysis import metrics
-from app.crud.analysis import _build_history, _week_start
+from app.crud.analysis import (
+    _build_history,
+    _build_record,
+    _session_volumes,
+    _week_start,
+    window_start,
+)
 from app.schemas.analysis import ExerciseSessionPoint
 
 # ------------------------------------------------------------- estimated 1RM
@@ -215,3 +221,110 @@ def test_two_movements_in_one_session_count_as_one_session() -> None:
         ],
     )
     assert history.session_count == 1
+
+
+# --------------------------------------------------------------- window bounds
+
+
+@pytest.mark.parametrize(
+    ("weeks", "expected"),
+    [
+        (1, date(2026, 7, 27)),   # this week alone — Wed 29th sits in the 27th's week
+        (2, date(2026, 7, 20)),
+        (12, date(2026, 5, 11)),
+    ],
+)
+def test_window_starts_on_a_monday_and_includes_the_current_week(
+    weeks: int, expected: date
+) -> None:
+    assert window_start(date(2026, 7, 29), weeks) == expected
+
+
+# ------------------------------------------------------------ personal records
+
+
+def test_records_pick_each_best_independently() -> None:
+    """The heaviest bar and the best estimated max need not be the same session:
+    a rep PR at a lighter load can beat a heavier low-rep set."""
+    record = _build_record(
+        uuid.uuid4(),
+        "Barbell Bench Press",
+        [
+            _point(date(2026, 6, 1), Decimal("100"), 1),   # heaviest, 1RM 100.00
+            _point(date(2026, 6, 8), Decimal("90"), 8),    # 1RM 114.00 — the better max
+        ],
+    )
+    assert record.heaviest_weight_kg == Decimal("100")
+    assert record.heaviest_weight_on == date(2026, 6, 1)
+    assert record.best_estimated_one_rm == Decimal("114.00")
+    assert record.best_estimated_one_rm_on == date(2026, 6, 8)
+
+
+def test_an_equalled_record_keeps_the_day_it_was_first_set() -> None:
+    record = _build_record(
+        uuid.uuid4(),
+        "Deadlift",
+        [
+            _point(date(2026, 6, 1), Decimal("140"), 3),
+            _point(date(2026, 6, 15), Decimal("140"), 3),  # equalled, not beaten
+        ],
+    )
+    assert record.heaviest_weight_on == date(2026, 6, 1)
+
+
+def test_session_volume_sums_repeated_slots_in_one_workout() -> None:
+    """Two bench slots in one session are one session's work. Comparing them
+    separately would let a single-slot day beat a bigger split one."""
+    split_day = uuid.uuid4()
+    volumes = _session_volumes(
+        [
+            _point(date(2026, 6, 1), Decimal("60"), 10, sets=3, workout_id=split_day),
+            _point(date(2026, 6, 1), Decimal("50"), 10, sets=3, workout_id=split_day),
+        ]
+    )
+    assert volumes == [(date(2026, 6, 1), Decimal("3300.00"))]
+
+
+def test_best_session_volume_prefers_the_bigger_split_session() -> None:
+    split_day, single_day = uuid.uuid4(), uuid.uuid4()
+    record = _build_record(
+        uuid.uuid4(),
+        "Barbell Bench Press",
+        [
+            _point(date(2026, 6, 1), Decimal("60"), 10, sets=3, workout_id=split_day),
+            _point(date(2026, 6, 1), Decimal("50"), 10, sets=3, workout_id=split_day),
+            _point(date(2026, 6, 8), Decimal("70"), 10, sets=3, workout_id=single_day),
+        ],
+    )
+    # split day 1800 + 1500 = 3300 beats the single day's 2100
+    assert record.best_session_volume_kg == Decimal("3300.00")
+    assert record.best_session_volume_on == date(2026, 6, 1)
+
+
+def test_bodyweight_movement_has_no_weight_records_but_still_has_a_card() -> None:
+    """Pull-ups belong on the PR board — with reps and dates, not a blank row."""
+    record = _build_record(
+        uuid.uuid4(),
+        "Pull-up",
+        [
+            _point(date(2026, 6, 1), None, 8),
+            _point(date(2026, 6, 8), None, 10),
+        ],
+    )
+    assert record.heaviest_weight_kg is None
+    assert record.best_estimated_one_rm is None
+    assert record.best_session_volume_kg is None
+    assert record.session_count == 2
+    assert record.last_performed_on == date(2026, 6, 8)
+
+
+def test_records_ignore_unusable_estimates_but_keep_the_weight() -> None:
+    """A 30-rep set has no meaningful 1RM, but the bar was still loaded — the
+    weight record must not vanish because the estimate did."""
+    record = _build_record(
+        uuid.uuid4(),
+        "Barbell Squat",
+        [_point(date(2026, 6, 1), Decimal("80"), 30)],
+    )
+    assert record.heaviest_weight_kg == Decimal("80")
+    assert record.best_estimated_one_rm is None

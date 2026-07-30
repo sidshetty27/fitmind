@@ -24,6 +24,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.analysis import metrics
+from app.models.enums import MuscleGroup
 from app.models.exercise import Exercise
 from app.models.workout import Workout
 from app.models.workout_exercise import WorkoutExercise
@@ -74,6 +75,7 @@ async def exercise_history(
         select(
             WorkoutExercise.exercise_id,
             Exercise.name,
+            Exercise.primary_muscle_group,
             Workout.id,
             Workout.performed_on,
             WorkoutExercise.sets,
@@ -93,9 +95,11 @@ async def exercise_history(
 
     grouped: dict[uuid.UUID, list] = defaultdict(list)
     names: dict[uuid.UUID, str] = {}
+    groups: dict[uuid.UUID, MuscleGroup] = {}
     for row in (await db.execute(stmt)).all():
-        ex_id, ex_name, workout_id, performed_on, sets, reps, weight, rpe = row
+        ex_id, ex_name, muscle, workout_id, performed_on, sets, reps, weight, rpe = row
         names[ex_id] = ex_name
+        groups[ex_id] = muscle
         grouped[ex_id].append(
             ExerciseSessionPoint(
                 workout_id=workout_id,
@@ -111,7 +115,8 @@ async def exercise_history(
         )
 
     histories = [
-        _build_history(ex_id, names[ex_id], points) for ex_id, points in grouped.items()
+        _build_history(ex_id, names[ex_id], groups[ex_id], points)
+        for ex_id, points in grouped.items()
     ]
     # Most-trained first, then name so equal counts do not order arbitrarily
     # between calls — a jittering list is a bad chart legend and a bad diff.
@@ -122,7 +127,10 @@ async def exercise_history(
 
 
 def _build_history(
-    exercise_id: uuid.UUID, name: str, points: list[ExerciseSessionPoint]
+    exercise_id: uuid.UUID,
+    name: str,
+    muscle_group: MuscleGroup,
+    points: list[ExerciseSessionPoint],
 ) -> ExerciseHistory:
     """Turn one movement's ordered points into its trend summary.
 
@@ -143,6 +151,7 @@ def _build_history(
     return ExerciseHistory(
         exercise_id=exercise_id,
         exercise_name=name,
+        primary_muscle_group=muscle_group,
         points=points,
         session_count=len({p.workout_id for p in points}),
         best_estimated_one_rm=best,
@@ -332,8 +341,37 @@ async def training_summary(
     )
 
 
+async def coaching_summary(
+    db: AsyncSession,
+    *,
+    user_id: uuid.UUID,
+    today: date,
+    weeks: int = DEFAULT_WINDOW_WEEKS,
+) -> TrainingSummary:
+    """The summary the findings layer must use — deliberately **uncapped**.
+
+    `training_summary` caps movements at `DEFAULT_EXERCISE_LIMIT`, most-trained
+    first, to bound the size of anything built from it. That cap is actively wrong
+    for coaching: it drops the *least*-trained movements, which are precisely the
+    ones a neglect finding is about. A calf raise that quietly stopped happening
+    ranks last by session count and gets cut before anything can notice it — the
+    coach would be structurally blind to exactly the pattern it exists to catch.
+
+    Passing the cap through as a parameter and trusting callers to pass `None`
+    would work until the first caller forgot, and the failure is silent: fewer
+    findings, no error. So the correct call is its own function.
+
+    Prompt size is still bounded, just further up: findings condense any number of
+    movements into a handful of observations.
+    """
+    return await training_summary(
+        db, user_id=user_id, today=today, weeks=weeks, limit_exercises=None
+    )
+
+
 __all__ = [
     "DEFAULT_EXERCISE_LIMIT",
+    "coaching_summary",
     "DEFAULT_WINDOW_WEEKS",
     "exercise_history",
     "personal_records",

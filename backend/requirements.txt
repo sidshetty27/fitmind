@@ -21,6 +21,11 @@ pyjwt[crypto]==2.10.1
 # the test suite's in-process ASGI client.
 httpx==0.28.1
 
+# AI coach (Phase 7)
+# Optional at runtime: `app.ai.coach` degrades to findings-only when no API key
+# is configured, so the app boots and the Coach page works without it.
+anthropic==0.116.0
+
 # Test tooling
 pytest==8.3.4
 pytest-asyncio==0.25.0

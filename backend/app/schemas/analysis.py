@@ -15,6 +15,7 @@ from decimal import Decimal
 
 from pydantic import BaseModel, Field
 
+from app.models.enums import MuscleGroup
 from app.schemas.common import NonNegativeInt
 
 
@@ -39,6 +40,10 @@ class ExerciseHistory(BaseModel):
 
     exercise_id: uuid.UUID
     exercise_name: str
+    # Carried on the history rather than looked up again by consumers: without it
+    # the summary cannot answer "which muscle groups has this user neglected",
+    # which is the whole basis of the staleness finding.
+    primary_muscle_group: MuscleGroup
     points: list[ExerciseSessionPoint] = Field(default_factory=list)
 
     session_count: NonNegativeInt

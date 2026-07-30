@@ -8,7 +8,14 @@ Deliberately split in two:
     and is skipped by default.
   - `app.crud.analysis` does the querying and calls into `metrics` to derive.
 
-Nothing here decides *what to say* about the numbers. Plateau wording,
-progression advice, and plan generation live above this layer and consume its
-output, so the arithmetic can be verified independently of any model call.
+  - `findings` (Phase 7) turns those derived numbers into *observations* —
+    plateaus, volume drops, neglected muscle groups, movements with room to
+    progress. Also pure, and also fully tested, because these are the sentences
+    the AI coach is handed as fact.
+
+Nothing here calls a language model. The model consumes `findings` output and is
+responsible for prioritising and phrasing it, never for computing it: a model
+doing arithmetic on a set log will eventually state a wrong number confidently,
+and a wrong number is worse than no coaching. Keeping the maths here also means
+the feature still works with no API key and for users over their quota.
 """

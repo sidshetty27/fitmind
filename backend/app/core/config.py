@@ -98,6 +98,26 @@ class Settings(BaseSettings):
     # door to forged user data.
     clerk_webhook_secret: str | None = None
 
+    # ---------- AI coach (Phase 7) ----------
+    # Optional on purpose. The coach computes its findings deterministically from
+    # logged workouts; the model only phrases them. With no key the endpoint still
+    # returns findings, so the feature degrades to "no coaching voice" rather than
+    # to an error — and local development needs no billing account.
+    anthropic_api_key: str | None = None
+
+    # Pinned rather than defaulted in code so an upgrade is a config change with
+    # an audit trail: `ai_analyses.model` records which model wrote each note.
+    anthropic_model: str = "claude-opus-5"
+
+    # How much of the user's history the coach reasons over. Matches the Progress
+    # page's default so the two never disagree about what "recently" means.
+    coach_window_weeks: int = 12
+
+    @property
+    def ai_enabled(self) -> bool:
+        """Whether a narrative can be generated at all."""
+        return bool(self.anthropic_api_key)
+
     @field_validator("database_url", "migration_database_url")
     @classmethod
     def _coerce_driver(cls, value: str | None) -> str | None:

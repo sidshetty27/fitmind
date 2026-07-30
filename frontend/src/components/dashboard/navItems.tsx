@@ -58,6 +58,16 @@ export const NAV_ITEMS: NavItem[] = [
     ),
   },
   {
+    href: "/dashboard/coach",
+    label: "Coach",
+    icon: (
+      <svg {...iconProps}>
+        <path d="M12 3l1.9 4.3 4.6.5-3.4 3.1.9 4.6L12 13.3 8 15.5l.9-4.6L5.5 7.8l4.6-.5z" />
+        <path d="M5 19h14" />
+      </svg>
+    ),
+  },
+  {
     href: "/dashboard/progress",
     label: "Progress",
     icon: (

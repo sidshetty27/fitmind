@@ -354,6 +354,52 @@ export interface TrainingSummary {
   exercises: ExerciseHistory[];
 }
 
+/**
+ * AI coach (Phase 7).
+ *
+ * A finding is computed from the user's own logged sets, never generated — its
+ * `statement` is already a complete, true sentence, which is why the UI can
+ * render an analysis with no `narrative` and have it read as finished rather
+ * than as raw data.
+ */
+export type FindingKind =
+  | "plateau"
+  | "volume_drop"
+  | "stale_muscle_group"
+  | "ready_to_progress";
+
+export interface Finding {
+  /** Widened beyond `FindingKind` on purpose: a detector added server-side must
+   *  render as an unstyled finding, not crash the page. */
+  kind: FindingKind | string;
+  subject: string;
+  statement: string;
+  detail: Record<string, unknown>;
+}
+
+export interface AiAnalysis {
+  id: string;
+  window_start: string;
+  window_end: string;
+  workout_count: number;
+  findings: Finding[];
+  /** Null when no coaching voice was available. The findings still stand. */
+  narrative: string | null;
+  /** Which model wrote `narrative`. Null exactly when `narrative` is null. */
+  model: string | null;
+  created_at: string;
+}
+
+export interface AiAnalysisListItem {
+  id: string;
+  window_start: string;
+  window_end: string;
+  workout_count: number;
+  finding_count: number;
+  has_narrative: boolean;
+  created_at: string;
+}
+
 export type PingResponse = { message: string };
 export type HealthResponse = { status: string; service: string; environment: string };
 
@@ -454,6 +500,20 @@ export const api = {
       }),
     delete: (token: Token, id: string) =>
       request<void>(`/api/templates/${id}`, { method: "DELETE", token }),
+  },
+
+  coach: {
+    /** Run a fresh analysis. POST because it costs a model call and writes a row. */
+    run: (token: Token, params?: { weeks?: number }) =>
+      request<AiAnalysis>("/api/coach/analyses", {
+        method: "POST",
+        query: params,
+        token,
+      }),
+    history: (token: Token, params?: { limit?: number; offset?: number }) =>
+      request<AiAnalysisListItem[]>("/api/coach/analyses", { token, query: params }),
+    get: (token: Token, id: string) =>
+      request<AiAnalysis>(`/api/coach/analyses/${id}`, { token }),
   },
 
   analytics: {

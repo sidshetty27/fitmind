@@ -57,10 +57,27 @@ def test_empty_findings_still_produce_a_usable_prompt() -> None:
     assert "none" in prompt.lower()
 
 
-def test_system_prompt_forbids_inventing_numbers() -> None:
+def test_system_prompt_forbids_inventing_numbers_about_the_training() -> None:
     """The single most important line in this package — assert it exists so it
-    cannot be edited away silently."""
-    assert "Never state a number that does not appear in the findings" in coach.SYSTEM_PROMPT
+    cannot be edited away silently.
+
+    Scoped to the athlete's *training* deliberately. The original wording forbade
+    any number at all, which real narratives broke the moment they recommended a
+    training frequency ("get them back in twice a week"). A rule that every output
+    quietly violates teaches you to stop reading it; this one draws the line where
+    the guarantee actually matters.
+    """
+    assert (
+        "Never state a number about the athlete's training that does not appear "
+        "in the findings" in coach.SYSTEM_PROMPT
+    )
+
+
+def test_system_prompt_leaves_recommendation_numbers_to_the_model() -> None:
+    """The other half of that rule. Sets, reps and frequencies are advice rather
+    than claims about what the athlete did, and no finding could support them —
+    so forbidding them would forbid coaching."""
+    assert "are yours to choose" in coach.SYSTEM_PROMPT
 
 
 # -------------------------------------------------------------- the verifier

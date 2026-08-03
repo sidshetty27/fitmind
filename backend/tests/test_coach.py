@@ -1,10 +1,14 @@
 """AI coach tests — everything except the model call itself.
 
-No network, no API key, no mocking of the Anthropic client: what is worth testing
-here is the boundary around the model, not the model. Specifically that findings
-reach it as finished sentences, that a narrative referencing something it was
-never given is rejected, and that every unavailable-model path degrades to
-findings rather than raising.
+No network and no API key: what is worth testing here is the boundary around the
+model, not the model. Specifically that findings reach it as finished sentences,
+that a narrative referencing something it was never given is rejected, and that
+every unavailable-model path degrades to findings rather than raising.
+
+The last section is the one exception, and substitutes the client. Some of the
+request's settings cannot be checked any other way, and getting them wrong fails
+*silently* — down the same path as a missing API key, so nothing raises and the
+page still renders. A test is the only thing that would notice.
 """
 
 import uuid
@@ -136,6 +140,88 @@ def test_summarise_returns_findings_even_with_no_model(monkeypatch) -> None:
 def test_summarise_of_nothing_is_still_a_valid_payload(monkeypatch) -> None:
     monkeypatch.setattr(settings, "anthropic_api_key", None)
     assert coach.summarise([]) == {"findings": [], "narrative": None, "model": None}
+
+
+# ------------------------------------------------------------ the request itself
+
+
+class _Messages:
+    """Records the request and answers happily, so the call runs to completion."""
+
+    def __init__(self, captured: dict) -> None:
+        self._captured = captured
+
+    def parse(self, **kwargs):
+        self._captured.update(kwargs)
+        return _Answer()
+
+
+class _Client:
+    def __init__(self, captured: dict) -> None:
+        self.messages = _Messages(captured)
+
+
+class _Answer:
+    stop_reason = "end_turn"
+    parsed_output = CoachNarrative(
+        headline="Squat is the story this week.",
+        notes=[CoachNote(finding_kind="plateau", text="Deload and rebuild.")],
+    )
+
+
+@pytest.fixture
+def request_kwargs(monkeypatch) -> dict:
+    """Run `generate_narrative` against a stand-in client, return what it sent."""
+    import anthropic
+
+    captured: dict = {}
+    monkeypatch.setattr(settings, "anthropic_api_key", "sk-ant-test")
+    monkeypatch.setattr(anthropic, "Anthropic", lambda **_: _Client(captured))
+
+    narrative, model = coach.generate_narrative([_finding()])
+    # If this fails the fixture is broken, not the thing under test.
+    assert narrative and model, "the stand-in answers, so a narrative must come back"
+    return captured
+
+
+def _thinking_is_off(request_kwargs: dict) -> bool:
+    """Whether this request actually disables thinking.
+
+    A *missing* `thinking` key is not "off" — omitting the argument is precisely
+    what leaves thinking on, so it has to read as on here or these tests would
+    wave through the exact regression they exist to catch.
+    """
+    return request_kwargs.get("thinking", {}).get("type") == "disabled"
+
+
+def test_thinking_is_off_so_the_budget_is_the_narrative_s_alone(request_kwargs) -> None:
+    """`max_tokens` caps thinking *and* response text together, and thinking is on
+    by default when the argument is omitted. Left on, it takes a share of a budget
+    sized for prose."""
+    assert _thinking_is_off(request_kwargs), (
+        "the request does not disable thinking — an omitted `thinking` argument "
+        "leaves it on, sharing MAX_TOKENS with the narrative"
+    )
+
+
+def test_the_budget_and_the_thinking_setting_stay_in_step(request_kwargs) -> None:
+    """The regression worth catching: thinking turned back on without raising the
+    budget it now shares. A run that spends the budget reasoning fails to parse and
+    returns no narrative — through the same path as an unset API key, so nothing
+    raises and it reads as "the key isn't working"."""
+    if not _thinking_is_off(request_kwargs):
+        assert request_kwargs["max_tokens"] >= 8000, (
+            "thinking now shares max_tokens with the response; 2000 is a "
+            "prose-sized budget, not a thinking-sized one"
+        )
+
+
+def test_effort_stays_low_enough_to_disable_thinking(request_kwargs) -> None:
+    """Disabling thinking is only accepted at effort `high` or below — pairing it
+    with `xhigh` or `max` is rejected at request time, which every other test here
+    is too far from the wire to see."""
+    if _thinking_is_off(request_kwargs):
+        assert request_kwargs["output_config"]["effort"] in {"low", "medium", "high"}
 
 
 # ------------------------------------------------------------------- settings

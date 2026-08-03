@@ -32,6 +32,11 @@ logger = logging.getLogger(__name__)
 # Comfortably above any narrative this prompt can produce, and far below the
 # model's ceiling — the cost control here is the small input, not a tight cap
 # that would truncate a note mid-sentence.
+#
+# This budget only holds because thinking is off (see the call below). `max_tokens`
+# caps thinking *and* response text together, so with thinking on, 2000 is shared
+# rather than reserved — and a run that spends it reasoning returns no narrative at
+# all. Raise this if thinking is ever turned back on here.
 MAX_TOKENS = 2000
 
 # The findings are already ordered by priority and bounded in number, so there is
@@ -134,6 +139,15 @@ def generate_narrative(findings: list[Finding]) -> tuple[str | None, str | None]
         response = client.messages.parse(
             model=settings.anthropic_model,
             max_tokens=MAX_TOKENS,
+            # Off deliberately, and it has to be explicit: on current models
+            # thinking is *on* by default when this argument is omitted. There is
+            # nothing here to reason about — the findings arrive already computed
+            # and already ordered, and the model's whole job is to phrase them.
+            # Left on, thinking would eat a share of `MAX_TOKENS`, and a run that
+            # exhausted the budget mid-structure would fail to parse and return no
+            # narrative — indistinguishable, from the outside, from having no API
+            # key configured at all.
+            thinking={"type": "disabled"},
             output_config={"effort": EFFORT},
             system=SYSTEM_PROMPT,
             messages=[{"role": "user", "content": build_prompt(findings)}],

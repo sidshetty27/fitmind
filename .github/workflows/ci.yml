@@ -1,0 +1,88 @@
+name: CI
+
+# Runs the checks `docs/phase-5-testing.md` and `docs/phase-7-testing.md` ask for
+# before committing, so a pull request proves them rather than relying on someone
+# remembering. Both suites are fast and hermetic — no database, no secrets, no
+# network — which is what makes it reasonable to run them on every push.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A newer push makes the in-flight run irrelevant. Cancelling keeps the queue
+# honest and stops a burst of commits from serialising behind stale jobs.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Read-only: nothing here writes to the repo, so nothing here needs to be able to.
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: backend (pytest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # No DATABASE_URL is set on purpose. `tests/conftest.py` points the app at a
+      # deliberately unreachable database before anything imports `app.*`, which is
+      # what lets the readiness endpoint's failure path be tested deterministically
+      # here. The handful of tests that need real Postgres opt in via
+      # TEST_DATABASE_URL and skip without it.
+      - name: Run tests
+        run: python -m pytest -q
+
+  frontend:
+    name: frontend (typecheck, lint, build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      # `!cancelled()` rather than the default: a type error and a lint error are
+      # independent problems, and finding out about them one run at a time is the
+      # slowest way to fix both.
+      - name: Lint
+        if: ${{ !cancelled() }}
+        run: npm run lint
+
+      # Not guarded — a build on top of broken types tells you nothing you did not
+      # already learn from the typecheck, and it is the expensive step.
+      #
+      # Needs no Clerk keys: every authenticated route renders on demand rather
+      # than prerendering, so nothing reaches Clerk at build time.
+      - name: Build
+        run: npm run build

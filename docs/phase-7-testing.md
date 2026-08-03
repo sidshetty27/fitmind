@@ -97,7 +97,8 @@ Set `ANTHROPIC_API_KEY` in `backend/.env` and restart. **This bills real API cal
 | # | Step | Expected result |
 |---|---|---|
 | 3.4 | POST an analysis with findings present | ✅ `narrative` is a headline plus up to 3 short paragraphs; `model` records which model wrote it |
-| 3.5 | Read the narrative against the findings | ✅ **Every number in the prose appears in a finding.** Nothing computed, estimated, or inferred. This is the property that matters most — if you see a figure the findings don't contain, that is a bug, not a style issue |
+| 3.5 | Read the narrative against the findings | ✅ **Every number describing your training appears in a finding** — weights, percentages, session counts, days since. Nothing computed, estimated, or inferred. This is the property that matters most: a figure about your training that the findings don't contain is a bug, not a style issue |
+| 3.5a | Note the numbers in the *advice* | ✅ Sets, reps, "twice a week", "back off for a week" are the model's to choose and are **not** expected in the findings. Rule 1 of the system prompt draws that line explicitly — an earlier wording forbade every number, which each real narrative broke as soon as it recommended a frequency |
 | 3.6 | Check it never contradicts or softens a finding | ✅ A decline is described as a decline |
 | 3.7 | POST with **zero** findings | ✅ Narrative says plainly there is nothing notable in this window, rather than inventing something |
 | 3.8 | Set `ANTHROPIC_API_KEY` to an invalid value, POST | ✅ **201** with `narrative: null`. A warning is logged. The user still gets their findings |

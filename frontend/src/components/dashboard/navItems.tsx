@@ -79,7 +79,6 @@ export const NAV_ITEMS: NavItem[] = [
   {
     href: "/dashboard/settings",
     label: "Settings",
-    soon: true,
     icon: (
       <svg {...iconProps}>
         <circle cx="12" cy="12" r="3" />

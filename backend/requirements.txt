@@ -26,6 +26,14 @@ httpx==0.28.1
 # is configured, so the app boots and the Coach page works without it.
 anthropic==0.116.0
 
+# Billing (Phase 8)
+# Also optional at runtime — with no Stripe key configured every user is free
+# tier and the checkout routes decline, so local development needs no Stripe
+# account. Used via its `*_async` methods (`create_async`, `retrieve_async`, ...)
+# so a payment API call never blocks the event loop; the sync methods on these
+# same classes would.
+stripe==15.4.0
+
 # Test tooling
 pytest==8.3.4
 pytest-asyncio==0.25.0

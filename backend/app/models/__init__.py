@@ -11,6 +11,7 @@ from app.models.ai_analysis import AiAnalysis
 from app.models.enums import Equipment, ExperienceLevel, Goal, MuscleGroup
 from app.models.exercise import Exercise
 from app.models.progress import ProgressEntry
+from app.models.subscription import Subscription
 from app.models.user import User
 from app.models.workout import Workout
 from app.models.workout_exercise import WorkoutExercise
@@ -25,6 +26,7 @@ __all__ = [
     "Goal",
     "MuscleGroup",
     "ProgressEntry",
+    "Subscription",
     "User",
     "Workout",
     "WorkoutExercise",

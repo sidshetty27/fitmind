@@ -82,6 +82,24 @@ async def count_since(
     return (await db.execute(stmt)).scalar_one()
 
 
+async def oldest_created_at_since(
+    db: AsyncSession, *, user_id: uuid.UUID, since: datetime
+) -> datetime | None:
+    """When the earliest analysis still inside the window was run.
+
+    Only interesting once someone is over quota: that run is the one whose
+    expiry frees up a slot, so `oldest + 24h` is when they can next analyse.
+    Without it a "limit reached" message can only say "later", which is the kind
+    of answer that gets reported as a bug.
+
+    `None` when there are no analyses in the window.
+    """
+    stmt = select(func.min(AiAnalysis.created_at)).where(
+        AiAnalysis.user_id == user_id, AiAnalysis.created_at >= since
+    )
+    return (await db.execute(stmt)).scalar_one_or_none()
+
+
 async def count_today(db: AsyncSession, *, user_id: uuid.UUID) -> int:
     """Analyses in the last 24 hours — a rolling window, not a calendar day.
 
@@ -99,4 +117,5 @@ __all__ = [
     "create_analysis",
     "get_analysis",
     "list_analyses",
+    "oldest_created_at_since",
 ]

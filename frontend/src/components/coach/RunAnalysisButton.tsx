@@ -1,12 +1,16 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 
 import { api } from "@/lib/api";
 import { normalizeApiError } from "@/lib/apiErrors";
 import { Button } from "@/components/ui/Button";
+
+/** The backend's machine-readable marker for a spent free allowance. */
+const QUOTA_CODE = "free_tier_limit_reached";
 
 /**
  * Runs a fresh analysis, then refreshes the page to show it.
@@ -27,12 +31,27 @@ import { Button } from "@/components/ui/Button";
  * is impossible without a hard reload. `isPending` is tied to the refresh itself
  * and clears when the new markup lands.
  */
-export function RunAnalysisButton({ hasWorkouts }: { hasWorkouts: boolean }) {
+export function RunAnalysisButton({
+  hasWorkouts,
+  remaining,
+}: {
+  hasWorkouts: boolean;
+  /** Free runs left today. `-1` means unlimited (premium). */
+  remaining: number;
+}) {
   const router = useRouter();
   const { getToken } = useAuth();
   const [submitting, setSubmitting] = useState(false);
   const [refreshing, startRefresh] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [outOfRuns, setOutOfRuns] = useState(false);
+
+  const unlimited = remaining < 0;
+  // Known-empty from the server render, or learned from a 402 after the fact.
+  // Both matter: the first stops a request that cannot succeed, the second
+  // catches a page that was rendered before the allowance ran out in another
+  // tab.
+  const spent = outOfRuns || (!unlimited && remaining <= 0);
 
   // Busy from the moment the request goes out until the refreshed page is on
   // screen, so the button is never idle over stale output.
@@ -46,7 +65,13 @@ export function RunAnalysisButton({ hasWorkouts }: { hasWorkouts: boolean }) {
       await api.coach.run(token);
       startRefresh(() => router.refresh());
     } catch (err) {
-      setError(normalizeApiError(err).formError);
+      const normalized = normalizeApiError(err);
+      // Branch on the code, not the message: the copy will be reworded and a
+      // check against prose would silently stop recognising this.
+      if (normalized.code === QUOTA_CODE) {
+        setOutOfRuns(true);
+      }
+      setError(normalized.formError);
     } finally {
       setSubmitting(false);
     }
@@ -60,12 +85,40 @@ export function RunAnalysisButton({ hasWorkouts }: { hasWorkouts: boolean }) {
       <Button
         onClick={handleRun}
         pending={busy}
-        disabled={!hasWorkouts}
-        title={hasWorkouts ? undefined : "Log a workout first"}
+        disabled={!hasWorkouts || spent}
+        title={
+          !hasWorkouts
+            ? "Log a workout first"
+            : spent
+              ? "You've used today's free analyses"
+              : undefined
+        }
       >
         Analyse my training
       </Button>
-      {error && (
+
+      {/* The count is only worth showing when it is nearly gone. "3 of 3 left"
+          is noise on a page nobody came here to read a quota on; "1 left" is
+          the thing that changes what someone does next. */}
+      {!unlimited && !spent && remaining <= 1 && (
+        <p className="text-xs text-zinc-500">
+          {remaining} free {remaining === 1 ? "analysis" : "analyses"} left today
+        </p>
+      )}
+
+      {spent && (
+        <p className="text-xs text-zinc-500">
+          No free analyses left today.{" "}
+          <Link
+            href="/dashboard/settings"
+            className="text-indigo-400 underline underline-offset-2 hover:text-indigo-300"
+          >
+            Upgrade for unlimited
+          </Link>
+        </p>
+      )}
+
+      {error && !spent && (
         <p role="alert" className="text-xs text-red-400">
           {error}
         </p>

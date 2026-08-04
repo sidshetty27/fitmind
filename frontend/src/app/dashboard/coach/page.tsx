@@ -6,6 +6,7 @@ import {
   api,
   type AiAnalysis,
   type AiAnalysisListItem,
+  type Subscription,
   type WorkoutListItem,
 } from "@/lib/api";
 import { normalizeApiError } from "@/lib/apiErrors";
@@ -42,15 +43,17 @@ export default async function CoachPage() {
   let history: AiAnalysisListItem[] = [];
   let latest: AiAnalysis | null = null;
   let workouts: WorkoutListItem[] = [];
+  let subscription: Subscription | null = null;
   let loadError: string | null = null;
 
   try {
     // The history list carries counts but not findings, so the newest one is
     // fetched in full. Two calls rather than a fatter list endpoint: the history
     // is usually rendered without ever expanding a row.
-    [history, workouts] = await Promise.all([
+    [history, workouts, subscription] = await Promise.all([
       api.coach.history(token, { limit: 10 }),
       api.workouts.list(token, { limit: 1 }),
+      api.me.subscription(token),
     ]);
     if (history.length > 0) {
       latest = await api.coach.get(token, history[0].id);
@@ -71,7 +74,15 @@ export default async function CoachPage() {
             computed from what you actually lifted.
           </p>
         </div>
-        <RunAnalysisButton hasWorkouts={hasWorkouts} />
+        {/* Defaults to unlimited when the plan could not be loaded. The server
+            enforces the quota regardless, so an optimistic button costs at
+            worst one refused request — while a pessimistic one would lock a
+            paying subscriber out of a feature they bought because an unrelated
+            call failed. */}
+        <RunAnalysisButton
+          hasWorkouts={hasWorkouts}
+          remaining={subscription?.ai_remaining ?? -1}
+        />
       </header>
 
       {loadError && (

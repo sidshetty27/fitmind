@@ -26,6 +26,25 @@ export interface NormalizedApiError {
   fieldErrors: Record<string, string>;
   /** HTTP status, when the failure reached the server at all. */
   status?: number;
+  /**
+   * Machine-readable reason, when the server sent a structured `detail`.
+   *
+   * Branch on this rather than on the message — copy gets reworded, and a UI
+   * that decides whether to show an upgrade prompt by matching prose breaks the
+   * first time someone improves the wording. Currently the only value is
+   * `free_tier_limit_reached`, from the quota gate.
+   */
+  code?: string;
+}
+
+/** A structured `detail` body: `{ code, message, ... }` rather than a string. */
+interface StructuredDetail {
+  code?: unknown;
+  message?: unknown;
+}
+
+function isStructuredDetail(value: unknown): value is StructuredDetail {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /** One entry of FastAPI's 422 `detail` array. */
@@ -61,6 +80,22 @@ export function isAbortError(error: unknown): boolean {
 export function normalizeApiError(error: unknown): NormalizedApiError {
   if (error instanceof ApiError) {
     const fieldErrors: Record<string, string> = {};
+
+    // A third `detail` shape, alongside the string and the 422 array: an object
+    // carrying a `code` and a human message. `api.ts` cannot turn that into
+    // `error.message` — it only unwraps strings — so without this branch a
+    // structured refusal surfaces as "Request to /api/... failed with status
+    // 402", which tells the user nothing about what happened or what to do.
+    if (isStructuredDetail(error.detail)) {
+      const { code, message } = error.detail;
+      return {
+        formError:
+          typeof message === "string" && message ? message : error.message,
+        fieldErrors,
+        status: error.status,
+        code: typeof code === "string" ? code : undefined,
+      };
+    }
 
     if (Array.isArray(error.detail)) {
       for (const item of error.detail) {

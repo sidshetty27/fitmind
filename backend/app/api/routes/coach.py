@@ -1,8 +1,15 @@
 """`/api/coach` — the AI coach. User-scoped.
 
 Running an analysis is a POST because it is not idempotent: it costs a model
-call and writes a row. The row is the point — Phase 8's usage gate is a count of
+call and writes a row. The row is the point — the usage gate is a count of
 these, and a user can re-read past coaching without paying for it again.
+
+That last clause is now load-bearing rather than aspirational: **only the POST is
+metered.** Both GETs stay on `get_current_user`, so a free user who has spent
+today's allowance can still open the Coach page and read every analysis they have
+ever run. Charging for a page view of something already paid for would be
+indefensible, and it would make the paywall feel like it had taken something
+away rather than declined to give more.
 
 The findings half never fails. A model that is unconfigured, rate-limited, or
 declining costs the response its `narrative`, not its `findings` — so this router
@@ -19,6 +26,7 @@ from app.ai import coach as coach_ai
 from app.analysis import findings as findings_engine
 from app.core.auth import get_current_user
 from app.core.config import settings
+from app.core.entitlements import require_ai_quota
 from app.crud import ai_analysis as analysis_crud
 from app.crud import analysis as aggregation_crud
 from app.db.session import get_db
@@ -36,7 +44,12 @@ async def run_analysis(
         le=52,
         description="Trailing window to analyse; defaults to the configured window",
     ),
-    current_user: User = Depends(get_current_user),
+    # `require_ai_quota` resolves the caller exactly as `get_current_user` does
+    # and returns the same `User`, then refuses with 402 if the free allowance is
+    # spent. Swapping the dependency is the whole enforcement: there is no quota
+    # check in this handler to forget to write, and no way to add a route that
+    # runs an analysis without choosing one of these two dependencies.
+    current_user: User = Depends(require_ai_quota),
     db: AsyncSession = Depends(get_db),
 ):
     """Analyse recent training, store the result, and return it.

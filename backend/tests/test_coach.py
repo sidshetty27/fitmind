@@ -259,3 +259,39 @@ def test_the_model_is_pinned_in_config_not_hardcoded() -> None:
     be configurable rather than buried in a call site."""
     assert settings.anthropic_model
     assert isinstance(settings.anthropic_model, str)
+
+
+# --------------------------------------------------------------- the pay gate
+
+
+def test_only_running_an_analysis_is_metered() -> None:
+    """POST is gated, both GETs are not — asserted at the dependency, which is
+    where the enforcement actually lives.
+
+    A free user who has spent today's allowance must still be able to open the
+    Coach page and read every analysis they have already run. Metering a GET
+    would take away something already paid for, which is a different and much
+    worse thing than declining to give more.
+
+    Checked by inspecting the resolved dependencies rather than by calling the
+    routes, because the failure this guards against is someone adding
+    `require_ai_quota` to a read path — or dropping it from the write path —
+    and nothing else noticing.
+    """
+    from app.core.entitlements import require_ai_quota
+    from app.main import app
+
+    gated = {}
+    for route in app.routes:
+        path = getattr(route, "path", "")
+        if not path.startswith("/api/coach"):
+            continue
+        calls = {d.call for d in route.dependant.dependencies}
+        for method in route.methods:
+            gated[(method, path)] = require_ai_quota in calls
+
+    assert gated[("POST", "/api/coach/analyses")] is True, "the paid action is free"
+    assert gated[("GET", "/api/coach/analyses")] is False, "reading history is metered"
+    assert (
+        gated[("GET", "/api/coach/analyses/{analysis_id}")] is False
+    ), "reading one past analysis is metered"

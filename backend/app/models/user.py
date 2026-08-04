@@ -12,6 +12,7 @@ from app.models.enums import ExperienceLevel, Goal, pg_enum
 if TYPE_CHECKING:  # avoid circular imports at runtime; relationships use strings
     from app.models.ai_analysis import AiAnalysis
     from app.models.progress import ProgressEntry
+    from app.models.subscription import Subscription
     from app.models.workout import Workout
     from app.models.workout_template import WorkoutTemplate
 
@@ -77,6 +78,15 @@ class User(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
     workout_templates: Mapped[list["WorkoutTemplate"]] = relationship(
         back_populates="user", cascade="all, delete-orphan", passive_deletes=True
+    )
+    # Scalar, not a list: `uq_subscriptions_user_id` makes at most one possible.
+    # Optional because most users never open checkout — no row means free tier,
+    # which is why `entitlements` reads absence as a plan rather than an error.
+    subscription: Mapped["Subscription | None"] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        uselist=False,
     )
 
     __table_args__ = (

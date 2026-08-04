@@ -52,11 +52,14 @@ See [`docs/architecture.md`](docs/architecture.md) for how these fit together an
 
 ```
 FitMind/
-├── frontend/        # Next.js + TypeScript app (Phases 1–2)
-├── backend/         # FastAPI service + SQLAlchemy models + Alembic (Phases 1, 3)
-├── docs/            # Architecture, database, and API documentation
+├── frontend/        # Next.js + TypeScript app
+├── backend/         # FastAPI service + SQLAlchemy models + Alembic
+├── docs/            # Architecture, database, and phase testing checklists
 │   ├── architecture.md
-│   └── database.md
+│   ├── database.md
+│   ├── phase-5-testing.md
+│   ├── phase-7-testing.md
+│   └── phase-8-testing.md
 ├── .gitignore
 └── README.md
 ```
@@ -73,10 +76,10 @@ This project is built in incremental, reviewable milestones:
 - **Phase 3 — Database** ✅ PostgreSQL schema, SQLAlchemy ORM, Alembic migrations
 - **Phase 4 — Core API** ✅ Clerk-authenticated CRUD (profile, workouts, progress), exercise catalog, user-sync webhook
 - **Phase 5 — Workout logging** ✅ Dashboard shell, workout CRUD UI, exercise search, reusable templates
-- **Phase 6 — AI** Training-history aggregation, workout analysis, recommendations, weekly plan generation
-- **Phase 6.5 — Progress** Charts and analytics over the aggregation layer (the Progress page)
-- **Phase 7 — Billing** Premium gating + Stripe subscriptions
-- **Phase 8 — Deployment** Production config, testing, performance
+- **Phase 6 — Analysis** ✅ Training-history aggregation, personal records, the Progress page
+- **Phase 7 — AI coach** ✅ Deterministic findings from logged sets, written up by a model
+- **Phase 8 — Billing** ✅ Stripe subscriptions, premium gating, free-tier AI metering
+- **Phase 9 — Deployment** Production config, performance, going live
 
 ---
 

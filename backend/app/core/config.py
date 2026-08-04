@@ -113,10 +113,52 @@ class Settings(BaseSettings):
     # page's default so the two never disagree about what "recently" means.
     coach_window_weeks: int = 12
 
+    # ---------- Billing (Phase 8) ----------
+    # Optional, for the same reason the Clerk and Anthropic keys are: the app must
+    # boot and the test suite must run without a Stripe account. With billing
+    # unconfigured every user is treated as free tier and the checkout routes
+    # refuse politely — the app does not break, it just has nothing to sell.
+    #
+    # Secret key (`sk_test_...` / `sk_live_...`). The publishable key is absent on
+    # purpose: Checkout is hosted, so the browser is redirected to a URL this
+    # backend creates and Stripe.js is never loaded. One less key to leak.
+    stripe_secret_key: str | None = None
+
+    # Signing secret (`whsec_...`) for /api/webhooks/stripe. Like its Clerk
+    # counterpart, missing means the endpoint rejects every delivery rather than
+    # trusting an unverified one.
+    stripe_webhook_secret: str | None = None
+
+    # The Price the upgrade button buys (`price_...`, not the Product id). Pinned
+    # in config so changing what premium costs is a config change, and so the
+    # webhook can tell the subscription we sold from one created elsewhere.
+    stripe_price_id: str | None = None
+
+    # Where Stripe returns the user after checkout or the billing portal. Separate
+    # from `cors_origins` deliberately: that is a security allow-list which may
+    # hold several entries, while this is the one canonical place to send someone
+    # back to, and picking "the first CORS origin" would be a silent guess.
+    frontend_url: str = "http://localhost:3000"
+
+    # Free-tier allowance for AI coach runs, over a rolling 24 hours (see
+    # `crud.ai_analysis.count_today`). Config rather than a constant so the
+    # business decision can be retuned without a code deploy. Premium is unlimited.
+    free_daily_ai_analyses: int = 3
+
     @property
     def ai_enabled(self) -> bool:
         """Whether a narrative can be generated at all."""
         return bool(self.anthropic_api_key)
+
+    @property
+    def billing_enabled(self) -> bool:
+        """Whether a subscription can actually be sold.
+
+        Both halves are required: a key with no price has nothing to charge for,
+        and a price with no key cannot be charged. Read this before offering an
+        upgrade anywhere, so an unconfigured deployment shows no dead buttons.
+        """
+        return bool(self.stripe_secret_key and self.stripe_price_id)
 
     @field_validator("database_url", "migration_database_url")
     @classmethod

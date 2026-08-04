@@ -400,6 +400,39 @@ export interface AiAnalysisListItem {
   created_at: string;
 }
 
+/**
+ * Billing (Phase 8).
+ *
+ * `premium` is the answer to "what is this user allowed to do". Never re-derive
+ * it from `status` on the client: the rules for what counts as paid (`past_due`
+ * still does, while Stripe retries the charge) live in the backend's
+ * `entitlements` module and must have exactly one implementation.
+ */
+export interface Subscription {
+  premium: boolean;
+  /** Stripe's raw status, for display and support. Null if never subscribed. */
+  status: string | null;
+  /** Null when nothing renews — free tier, or a subscription already lapsed. */
+  current_period_end: string | null;
+  /** True when cancelled but paid up: "ends on" rather than "renews on". */
+  cancel_at_period_end: boolean;
+  /** False when this deployment has no Stripe configured — hide the upgrade path. */
+  billing_enabled: boolean;
+  /** Whether a Stripe customer exists, and so whether the portal can be opened. */
+  has_billing_account: boolean;
+  ai_limit: number;
+  ai_used: number;
+  /** -1 means unlimited. */
+  ai_remaining: number;
+  /** When the oldest run in the rolling window expires. Only set once spent. */
+  ai_resets_at: string | null;
+}
+
+/** A Stripe-hosted page to navigate to. Checkout and portal both return this. */
+export interface HostedSession {
+  url: string;
+}
+
 export type PingResponse = { message: string };
 export type HealthResponse = { status: string; service: string; environment: string };
 
@@ -429,6 +462,23 @@ export const api = {
     get: (token: Token) => request<User>("/api/me", { token }),
     update: (token: Token, data: UserUpdate) =>
       request<User>("/api/me", { method: "PATCH", body: data, token }),
+    /** Plan and AI allowance. One source for both Settings and Coach, so the
+     *  two screens cannot disagree about whether someone is premium. */
+    subscription: (token: Token, opts?: CallOptions) =>
+      request<Subscription>("/api/me/subscription", { token, ...opts }),
+  },
+
+  billing: {
+    /**
+     * Both of these return a Stripe-hosted URL to navigate to — they do not
+     * change anything themselves. Only the Stripe webhook grants premium, so
+     * returning from checkout is not proof of payment and the page must re-read
+     * `me.subscription` rather than assume.
+     */
+    checkout: (token: Token) =>
+      request<HostedSession>("/api/billing/checkout", { method: "POST", token }),
+    portal: (token: Token) =>
+      request<HostedSession>("/api/billing/portal", { method: "POST", token }),
   },
 
   exercises: {

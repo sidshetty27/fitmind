@@ -30,6 +30,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 import stripe
+from stripe import StripeError
 
 from app.core.config import settings
 
@@ -190,6 +191,71 @@ async def retrieve_subscription(subscription_id: str) -> Any:
     return await _client().v1.subscriptions.retrieve_async(subscription_id)
 
 
+async def create_customer(*, email: str, user_id: str, name: str | None = None) -> str:
+    """Create a Stripe customer for a FitMind account and return its id.
+
+    `metadata.fitmind_user_id` is not decoration. When someone emails about a
+    charge, the Stripe dashboard is where you start, and without it there is no
+    way back from a `cus_...` to an account except guessing by email — which
+    fails precisely when it matters, because Clerk lets people change theirs.
+    """
+    customer = await _client().v1.customers.create_async(
+        params={
+            "email": email,
+            "name": name or None,
+            "metadata": {"fitmind_user_id": user_id},
+        }
+    )
+    return customer.id
+
+
+async def create_checkout_session(
+    *, customer_id: str, price_id: str, success_url: str, cancel_url: str
+) -> str:
+    """Open a hosted checkout for one subscription and return its URL.
+
+    `customer` is passed rather than `customer_email` so the purchase attaches to
+    the customer we already know about. Letting Stripe create one from an email
+    would make a second customer for a user who has bought before, splitting
+    their billing history across two records that nothing links.
+    """
+    session = await _client().v1.checkout.sessions.create_async(
+        params={
+            "mode": "subscription",
+            "customer": customer_id,
+            "line_items": [{"price": price_id, "quantity": 1}],
+            "success_url": success_url,
+            "cancel_url": cancel_url,
+            # Belt and braces for support: the session is also findable by the
+            # customer, but this survives into the completed-session event.
+            "client_reference_id": customer_id,
+        }
+    )
+
+    if not session.url:
+        # Typed as optional because it is absent for embedded and terminal-based
+        # sessions. Ours is hosted, so a missing URL means the request was not
+        # what we think it was — better to say so than to hand the frontend a
+        # redirect to `null`.
+        raise StripeError(f"Checkout session {session.id} has no hosted URL")
+
+    return session.url
+
+
+async def create_portal_session(*, customer_id: str, return_url: str) -> str:
+    """Open Stripe's billing portal and return its URL.
+
+    The portal is why this phase builds no cancel, update-card, or invoice-history
+    screens: Stripe hosts all three, keeps them correct as payment rules change,
+    and handles the dunning emails. Three pages we would otherwise write, test,
+    and get subtly wrong.
+    """
+    session = await _client().v1.billing_portal.sessions.create_async(
+        params={"customer": customer_id, "return_url": return_url}
+    )
+    return session.url
+
+
 async def cancel_subscription(subscription_id: str) -> None:
     """Cancel immediately, ending the billing relationship now rather than at
     the period end.
@@ -216,6 +282,9 @@ __all__ = [
     "StripeNotConfigured",
     "SubscriptionState",
     "cancel_subscription",
+    "create_checkout_session",
+    "create_customer",
+    "create_portal_session",
     "retrieve_subscription",
     "to_state",
     "verify_event",

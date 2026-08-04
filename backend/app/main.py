@@ -18,6 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import (
     analytics,
+    billing,
     coach,
     exercises,
     health,
@@ -74,5 +75,6 @@ app.include_router(templates.router)
 app.include_router(progress.router)
 app.include_router(analytics.router)
 app.include_router(coach.router)
+app.include_router(billing.router)
 app.include_router(webhooks.router)
 app.include_router(stripe_webhooks.router)

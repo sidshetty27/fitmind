@@ -21,16 +21,26 @@ signature every delivery is rejected, which is what stops anyone POSTing forged
 """
 
 import json
+import logging
 
 from fastapi import APIRouter, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core import svix
+from app.core import stripe_client, svix
 from app.core.config import settings
+from app.crud import subscription as subscription_crud
 from app.crud import user as user_crud
 from app.db.session import AsyncSessionLocal
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/webhooks", tags=["webhooks"])
+
+# Stripe statuses where billing has already stopped, so there is nothing for an
+# account deletion to cancel. Asking Stripe to cancel one of these is an error
+# rather than a no-op, which is why it is checked before calling rather than
+# handled after.
+_ALREADY_ENDED_STATUSES = frozenset({"canceled", "incomplete_expired"})
 
 
 def _primary_email(data: dict) -> str | None:
@@ -89,6 +99,53 @@ async def clerk_webhook(request: Request) -> None:
         await _apply_event(db, event_type, clerk_id, data)
 
 
+async def _cancel_billing(db: AsyncSession, clerk_id: str) -> None:
+    """Stop charging a card for an account that is being deleted.
+
+    **Order matters, and it is the whole reason this is a separate function.**
+    `subscriptions.user_id` is ON DELETE CASCADE, so the row naming the Stripe
+    subscription disappears the instant the user is deleted. Read it after, and
+    the subscription keeps billing with nothing left in our database pointing at
+    it — the charge would only be discoverable by going through the Stripe
+    dashboard by hand.
+
+    **Why a failure here aborts the deletion.** Raising sends a 5xx, Clerk
+    retries the `user.deleted` event, and we get another attempt at cancelling.
+    The alternative — delete anyway, log the error — destroys the last local
+    record of a subscription that is still charging someone for an account they
+    closed. Delayed deletion is recoverable and invisible to the user, who can no
+    longer sign in either way; a silent recurring charge is neither.
+    """
+    user = await user_crud.get_user_by_clerk_id(db, clerk_id)
+    if user is None:
+        return  # already deleted, or never provisioned
+
+    subscription = await subscription_crud.get_by_user_id(db, user_id=user.id)
+    if subscription is None or not subscription.stripe_subscription_id:
+        return  # free tier, or a customer who never completed checkout
+
+    if subscription.status in _ALREADY_ENDED_STATUSES:
+        return  # nothing left to stop
+
+    if not settings.stripe_secret_key:
+        # Nothing we can do about it here, but this must not pass unremarked:
+        # somebody is about to lose the only local record of a live subscription.
+        logger.error(
+            "Deleting user %s who has Stripe subscription %s, but STRIPE_SECRET_KEY "
+            "is not set — cancel it manually in the Stripe dashboard.",
+            clerk_id,
+            subscription.stripe_subscription_id,
+        )
+        return
+
+    await stripe_client.cancel_subscription(subscription.stripe_subscription_id)
+    logger.info(
+        "Cancelled Stripe subscription %s for deleted user %s",
+        subscription.stripe_subscription_id,
+        clerk_id,
+    )
+
+
 async def _apply_event(
     db: AsyncSession, event_type: str | None, clerk_id: str, data: dict
 ) -> None:
@@ -100,6 +157,7 @@ async def _apply_event(
             db, clerk_id=clerk_id, email=email, name=_full_name(data)
         )
     elif event_type == "user.deleted":
+        await _cancel_billing(db, clerk_id)
         await user_crud.delete_user_by_clerk_id(db, clerk_id=clerk_id)
     # Any other event type is acknowledged and ignored — Clerk sends many we do
     # not subscribe to logic for, and 204 stops it retrying them.

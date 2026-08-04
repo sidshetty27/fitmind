@@ -23,6 +23,7 @@ from app.api.routes import (
     health,
     me,
     progress,
+    stripe_webhooks,
     templates,
     webhooks,
     workouts,
@@ -74,3 +75,4 @@ app.include_router(progress.router)
 app.include_router(analytics.router)
 app.include_router(coach.router)
 app.include_router(webhooks.router)
+app.include_router(stripe_webhooks.router)

@@ -21,8 +21,9 @@ users ──1:N──► workouts ──1:N──► workout_exercises ───
   │
   └──1:N──► progress_entries      (bodyweight, calories, protein, sleep)
 
-later phases:
-  users ──1:N──► ai_insights · ai_usage      ──1:1──► subscriptions
+  ├──1:N──► ai_analyses           (stored coach runs; also the AI usage meter)
+  │
+  └──1:1──► subscriptions         (mirrored Stripe plan/status)
 ```
 
 ## The central modelling decision: a shared exercise catalog
@@ -151,5 +152,12 @@ Applying is a **copy, not a link**: `POST /api/templates/{id}/apply` creates an 
 
 No index is created where a UNIQUE constraint's backing btree already covers the access pattern — a redundant index costs write throughput and buys nothing.
 
-## Planned for later phases
-`subscriptions` (Stripe plan/status, 1:1 with users), `ai_usage` (free-tier metering), `ai_insights` (jsonb AI output). Designed in Phase 0; they arrive with Phases 6–7 rather than being built speculatively.
+## What happened to the tables Phase 0 planned
+
+Phase 0 sketched three more tables. Two arrived under different names, and one was dropped on purpose — recorded here because "planned but absent" and "deliberately not built" look identical in a schema.
+
+- **`subscriptions`** arrived in Phase 8 as designed: 1:1 with users, mirroring Stripe's plan and status. The one departure is that `status` is a plain `String` rather than a native PG enum, unlike every other controlled vocabulary here. Stripe owns that vocabulary, so an unrecognised value has to be *storable*: at an enum column a new Stripe status would fail the webhook write, leaving us serving stale entitlement while Stripe went on billing the customer.
+
+- **`ai_insights`** arrived in Phase 7 as `ai_analyses` — same idea (jsonb AI output), named for what it actually stores.
+
+- **`ai_usage` was dropped.** It was meant to meter the free tier, but Phase 7 made it redundant before it was ever built: a quota is `SELECT count(*) FROM ai_analyses WHERE user_id = ? AND created_at >= ?`, served by `ix_ai_analyses_user_id_created_at`. A separate counter table would be a denormalised copy of rows we already keep, with the usual consequence — the count and the rows it counts can disagree, and then neither is trustworthy. `crud/ai_analysis.count_since` is the whole meter.

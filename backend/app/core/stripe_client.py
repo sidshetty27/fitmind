@@ -36,6 +36,21 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+# Tags every Checkout Session this app creates, so the Dashboard can report on
+# this flow separately from any other checkout the account ever runs.
+#
+# **Constant, not generated per call.** Stripe's own docs on the field say
+# "Multiple Checkout Sessions can have the same integration identifier" — the
+# point is to group sessions belonging to one flow, and a value that changed per
+# request would put every session in a group of one and report nothing. The
+# eight-letter suffix is random *once*, chosen when this line was written, so the
+# label cannot collide with another integration's.
+#
+# Changing this value starts a new group and orphans the history under the old
+# one, so treat it as append-only: add a second identifier for a genuinely new
+# flow rather than editing this one.
+INTEGRATION_IDENTIFIER = "fitmind-premium-subscription-adcanzrn"
+
 
 class StripeNotConfigured(RuntimeError):
     """Raised when a Stripe call is attempted with no secret key set.
@@ -218,10 +233,16 @@ async def create_checkout_session(
     the customer we already know about. Letting Stripe create one from an email
     would make a second customer for a user who has bought before, splitting
     their billing history across two records that nothing links.
+
+    Note what is *not* passed: `payment_method_types`. Omitting it is what keeps
+    dynamic payment methods on, so the methods offered are whatever the Dashboard
+    has enabled and the customer is eligible for. Hardcoding `["card"]` — the
+    obvious-looking thing to write — silently narrows that to cards forever.
     """
     session = await _client().v1.checkout.sessions.create_async(
         params={
             "mode": "subscription",
+            "integration_identifier": INTEGRATION_IDENTIFIER,
             "customer": customer_id,
             "line_items": [{"price": price_id, "quantity": 1}],
             "success_url": success_url,
@@ -279,6 +300,7 @@ async def cancel_subscription(subscription_id: str) -> None:
 
 
 __all__ = [
+    "INTEGRATION_IDENTIFIER",
     "StripeNotConfigured",
     "SubscriptionState",
     "cancel_subscription",

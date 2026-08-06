@@ -119,9 +119,19 @@ class Settings(BaseSettings):
     # unconfigured every user is treated as free tier and the checkout routes
     # refuse politely — the app does not break, it just has nothing to sell.
     #
-    # Secret key (`sk_test_...` / `sk_live_...`). The publishable key is absent on
-    # purpose: Checkout is hosted, so the browser is redirected to a URL this
-    # backend creates and Stripe.js is never loaded. One less key to leak.
+    # The API key this backend authenticates with. Named for the slot rather than
+    # the key type: an account secret key (`sk_...`) works, but the right thing
+    # to put here is a **restricted key** (`rk_...`) scoped to the four
+    # permissions this app actually uses — see `.env.example` for the list, and
+    # `stripe_client.py` for the five calls it is derived from.
+    #
+    # The distinction is worth the sentence because the two are interchangeable
+    # at this line and very different if leaked: an `sk_` can refund charges and
+    # read every customer on the account, while a correctly scoped `rk_` cannot.
+    #
+    # The publishable key is absent on purpose: Checkout is hosted, so the
+    # browser is redirected to a URL this backend creates and Stripe.js is never
+    # loaded. One less key to leak.
     stripe_secret_key: str | None = None
 
     # Signing secret (`whsec_...`) for /api/webhooks/stripe. Like its Clerk

@@ -39,8 +39,9 @@ All in **test mode** — check the toggle before starting.
 | 0.5 | Create a Stripe account (or use an existing one) at dashboard.stripe.com | Test mode available |
 | 0.6 | Product catalog → **Add a product**. Name it "FitMind Premium", add a **recurring** monthly price | Product created |
 | 0.7 | Copy the **price** id — `price_...`, from the pricing section of the product | ⚠️ Not the `prod_...` id, which is the easier one to grab by mistake. A `prod_` here fails at checkout, not at boot, with "No such price" |
-| 0.8 | Developers → API keys → copy the **secret** key (`sk_test_...`) | Copied |
-| 0.9 | Set `STRIPE_SECRET_KEY` and `STRIPE_PRICE_ID` in `backend/.env` | Saved |
+| 0.8 | Developers → API keys → **Create restricted key**. Grant only: **Customers** Write, **Checkout Sessions** Write, **Billing Portal Sessions** Write, **Subscriptions** Write. Everything else None. Copy the `rk_test_...` | ✅ A restricted key, not the account secret key. The app makes exactly five calls (all in `app/core/stripe_client.py`) and those four permissions cover them. A leaked `sk_` can refund charges and read every customer; a leaked key scoped like this cannot |
+| 0.9 | Set `STRIPE_SECRET_KEY` (to the `rk_`) and `STRIPE_PRICE_ID` in `backend/.env` | Saved. ⚠️ The variable is named for the slot, not the key type — an `rk_` belongs here |
+| 0.9a | Work through sections 2 and 3 and watch for **403**s | ✅ None. A 403 means a permission is missing rather than that the key is wrong — add it in the Dashboard and retry. Stripe's own migration guidance is to watch `stripe logs tail` while exercising the integration |
 
 ### 0c. Local webhook forwarding
 
@@ -197,6 +198,8 @@ The path with real money attached, and the one whose ordering is load-bearing.
 | 8.5 | View source on `/dashboard/settings` | ✅ No Clerk JWT and no Stripe key in the HTML — the plan is fetched server-side |
 | 8.6 | Search the codebase for a request path writing `status` | ✅ None. Only `crud/subscription.apply_stripe_state` writes it, and only the webhook calls it |
 | 8.7 | Change `ai_remaining` in the browser devtools, then click Analyse | ✅ Still **402**. The button state is a convenience; the server is the gate |
+| 8.8 | `grep STRIPE_SECRET_KEY backend/.env` | ✅ Starts `rk_`, not `sk_`. An account secret key here works and is the easy thing to paste, which is exactly why it is worth checking rather than assuming |
+| 8.9 | Confirm no key is in source control:<br>`git grep -nE "[sr]k_(test\|live)_[A-Za-z0-9]{12,}" -- ':!*.env.example'` | ✅ No matches. Keys live in `.env`, which is git-ignored. A committed key is the leading cause of Stripe account takeover, and an `rk_test_` in a repo is a warning that an `rk_live_` will eventually follow the same path.<br><br>The length bound and the exclusion are both deliberate: without them the `xxxx` placeholders in `.env.example` match every time, and a check that always fails is a check you learn to ignore |
 
 ---
 

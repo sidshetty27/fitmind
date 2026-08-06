@@ -241,13 +241,13 @@ Run before committing:
 cd frontend && npx tsc --noEmit     # expect: no output
 cd frontend && npm run lint         # expect: no output
 cd frontend && npm run build        # expect: ✓ Compiled successfully, /dashboard/settings listed
-cd backend  && .venv\Scripts\python -m pytest -q   # expect: 194 passed, 6 skipped
+cd backend  && .venv\Scripts\python -m pytest -q   # expect: 197 passed, 6 skipped
 ```
 
 ⚠️ The 6 skips need a live database; they opt in via `TEST_DATABASE_URL` (see
 `tests/conftest.py`).
 
-None of the 194 tests touch Stripe's API or a database. That is deliberate — they
+None of the 197 tests touch Stripe's API or a database. That is deliberate — they
 cover the decisions (what counts as premium, what a refusal returns, how an event
 maps to a row) rather than the integration. **Sections 0–7 above are the only
 thing that tests the integration**, and they cannot be automated away.

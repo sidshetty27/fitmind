@@ -90,7 +90,20 @@ This project is built in incremental, reviewable milestones:
 ```bash
 git clone https://github.com/<your-username>/FitMind.git
 cd FitMind
+
+# Enable the secret-scanning pre-commit hook (once per clone)
+git config core.hooksPath .githooks
 ```
+
+That last line is worth running before your first commit. `.githooks/pre-commit`
+blocks a commit whose staged changes contain a Stripe, Clerk, or Anthropic key,
+or that would commit a `.env`. A published key cannot be un-published — rewriting
+history afterwards does not help — so the only cheap moment to catch one is
+before the commit exists.
+
+It scans added lines only, ignores the `xxxx` placeholders in `.env.example`,
+and redacts anything it reports. `--no-verify` overrides it for the false
+positive you will eventually hit.
 
 ---
 

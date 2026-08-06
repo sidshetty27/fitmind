@@ -1,0 +1,103 @@
+#!/bin/sh
+#
+# Blocks a commit that would put a secret into source control.
+#
+# A committed API key is the leading cause of provider account takeover, and the
+# damage is done the moment it is pushed — rewriting history afterwards does not
+# un-publish it. This runs before the commit exists, which is the only point
+# where the problem is still cheap.
+#
+# Scans **added lines in staged changes only**, not the whole tree. Scanning
+# everything would re-flag anything already committed on every future commit,
+# and a hook that always fails is a hook people learn to bypass.
+#
+# Enable with:
+#   git config core.hooksPath .githooks
+#
+# Bypass a single commit with `--no-verify`, which exists for the false positive
+# you will eventually hit. Read what it printed first.
+
+set -eu
+
+# Patterns worth stopping. Length bounds keep them off short fixtures like
+# `sk_test_dummy` in the test suite, which are not secrets and never will be.
+#
+#   sk_/rk_  Stripe secret and restricted keys — also matches Clerk's secret
+#            key, which shares the prefix, so this covers both providers
+#   whsec_   webhook signing secrets (Stripe and Svix/Clerk)
+#   sk-ant-  Anthropic API keys
+PATTERN='(sk|rk)_(test|live)_[A-Za-z0-9]{12,}|whsec_[A-Za-z0-9]{16,}|sk-ant-[A-Za-z0-9_-]{16,}'
+
+# Placeholder runs like `sk_test_xxxxxxxx` live in .env.example on purpose. A
+# real key essentially never contains four consecutive x's, and treating those
+# as findings would make this fire on a file whose entire job is to show the
+# shape of a key.
+PLACEHOLDER='xxxx'
+
+fail=0
+
+# Masks a matched secret down to its prefix plus four characters — enough to see
+# *which* key leaked, never enough to use it.
+#
+# This matters more than it looks. The obvious implementation prints the
+# offending line so you can see what it caught, which then writes a live key
+# into terminal scrollback, CI logs, and any screen being shared — a hook meant
+# to stop a leak becoming one. Anything printed here must already be redacted.
+redact() {
+  sed -E \
+    -e 's/((sk|rk)_(test|live)_[A-Za-z0-9]{4})[A-Za-z0-9]+/\1…REDACTED/g' \
+    -e 's/(whsec_[A-Za-z0-9]{4})[A-Za-z0-9]+/\1…REDACTED/g' \
+    -e 's/(sk-ant-[A-Za-z0-9_-]{4})[A-Za-z0-9_-]+/\1…REDACTED/g'
+}
+
+# --- 1. Secret-shaped strings in added lines -------------------------------
+#
+# Per file, so the report names where to look. `-U0` limits the diff to changed
+# lines, and the `^+` filter drops context and removals — a secret being
+# *deleted* is not a reason to block the deletion.
+for file in $(git diff --cached --name-only --diff-filter=ACM); do
+  added=$(git diff --cached -U0 -- "$file" | grep '^+' | grep -v '^+++' || true)
+  [ -n "$added" ] || continue
+
+  found=$(printf '%s\n' "$added" | grep -EI "$PATTERN" | grep -vi "$PLACEHOLDER" || true)
+  [ -n "$found" ] || continue
+
+  if [ "$fail" -eq 0 ]; then
+    echo "pre-commit: possible secret in staged changes" >&2
+    echo >&2
+  fi
+  echo "  $file" >&2
+  printf '%s\n' "$found" | redact | sed 's/^/    /' >&2
+  echo >&2
+  fail=1
+done
+
+if [ "$fail" -ne 0 ]; then
+  echo "  Move it to backend/.env (git-ignored) and read it from settings." >&2
+  echo >&2
+fi
+
+# --- 2. A real .env being committed ----------------------------------------
+#
+# .gitignore already covers this, but `git add -f` overrides it and that is
+# usually a mistake made in a hurry. Checked by path because a .env can hold
+# secrets in shapes no pattern above would catch.
+staged_env=$(git diff --cached --name-only --diff-filter=ACM |
+  grep -E '(^|/)\.env($|\.)' |
+  grep -v '\.example$' || true)
+
+if [ -n "$staged_env" ]; then
+  echo "pre-commit: refusing to commit an environment file" >&2
+  echo >&2
+  printf '%s\n' "$staged_env" | sed 's/^/  /' >&2
+  echo >&2
+  echo "  Unstage it with: git restore --staged <file>" >&2
+  fail=1
+fi
+
+if [ "$fail" -ne 0 ]; then
+  echo "Commit blocked. Use --no-verify to override deliberately." >&2
+  exit 1
+fi
+
+exit 0

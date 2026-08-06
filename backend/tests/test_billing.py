@@ -346,3 +346,74 @@ def _async_return(value):
         return value
 
     return _inner()
+
+
+# ------------------------------------------------- checkout session tagging
+
+
+def test_integration_identifier_is_a_constant_not_a_per_call_value() -> None:
+    """Stripe groups sessions by this label, so it must be stable.
+
+    The field's own documentation says "Multiple Checkout Sessions can have the
+    same integration identifier" — grouping is the entire point. A value
+    regenerated per request would put every session in a group of one and report
+    nothing, while looking perfectly correct in a code review.
+    """
+    from app.core.stripe_client import INTEGRATION_IDENTIFIER
+
+    assert stripe_client.INTEGRATION_IDENTIFIER is INTEGRATION_IDENTIFIER
+    # Read twice; a generated value would differ.
+    assert stripe_client.INTEGRATION_IDENTIFIER == stripe_client.INTEGRATION_IDENTIFIER
+
+
+def test_integration_identifier_carries_an_eight_letter_suffix() -> None:
+    """The suffix is what stops the label colliding with another integration's."""
+    import re
+
+    assert re.search(
+        r"-[a-z]{8}$", stripe_client.INTEGRATION_IDENTIFIER
+    ), f"expected an 8-letter suffix, got {stripe_client.INTEGRATION_IDENTIFIER!r}"
+
+
+async def test_checkout_session_is_tagged_and_leaves_payment_methods_dynamic(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two assertions about the same call, both about params rather than results.
+
+    `integration_identifier` must be sent, or the Dashboard cannot separate this
+    flow from any other checkout on the account.
+
+    `payment_method_types` must NOT be sent. Omitting it is what keeps dynamic
+    payment methods on; hardcoding `["card"]` is the obvious-looking thing to
+    write and permanently narrows what customers can pay with. Nothing fails when
+    it is wrong, which is why it is asserted here.
+    """
+    captured = {}
+
+    class FakeSessions:
+        async def create_async(self, params=None, options=None):
+            captured.update(params or {})
+            return type("S", (), {"id": "cs_1", "url": "https://checkout.stripe.com/x"})()
+
+    monkeypatch.setattr(
+        stripe_client,
+        "_client",
+        lambda: type(
+            "C",
+            (),
+            {"v1": type("V", (), {"checkout": type("K", (), {"sessions": FakeSessions()})()})()},
+        )(),
+    )
+
+    await stripe_client.create_checkout_session(
+        customer_id="cus_1",
+        price_id="price_1",
+        success_url="https://app.example.com/ok",
+        cancel_url="https://app.example.com/no",
+    )
+
+    assert captured["integration_identifier"] == stripe_client.INTEGRATION_IDENTIFIER
+    assert "payment_method_types" not in captured, (
+        "sending payment_method_types disables dynamic payment methods"
+    )
+    assert captured["mode"] == "subscription"

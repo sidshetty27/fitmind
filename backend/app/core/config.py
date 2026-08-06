@@ -144,6 +144,26 @@ class Settings(BaseSettings):
     # webhook can tell the subscription we sold from one created elsewhere.
     stripe_price_id: str | None = None
 
+    # Path to a CA bundle for Stripe API calls. Almost always unset.
+    #
+    # The Stripe SDK does not use the system trust store. It ships its own CA
+    # bundle and passes it as `cafile=`, which overrides `SSL_CERT_FILE` and
+    # `REQUESTS_CA_BUNDLE` rather than being overridden by them. On a machine
+    # whose antivirus intercepts HTTPS (Norton, Kaspersky, a corporate proxy),
+    # the interceptor's root is in the system store but not in Stripe's bundle,
+    # so **only** Stripe calls fail, with `CERTIFICATE_VERIFY_FAILED`, while
+    # Clerk and Anthropic work normally.
+    #
+    # That split is what makes it worth a setting rather than a README note. The
+    # failure looks like a bad API key — checkout 500s the moment a key is first
+    # used — and the traceback is thirty frames of httpx and httpcore before the
+    # word "certificate" appears. Anyone hitting it goes and re-reads their key.
+    #
+    # Point this at a bundle that includes the interceptor's root to fix it.
+    # Leave it unset in production: a deployed Linux host has no interceptor, and
+    # the SDK's own bundle is the correct thing to trust there.
+    stripe_ca_bundle: str | None = None
+
     # Where Stripe returns the user after checkout or the billing portal. Separate
     # from `cors_origins` deliberately: that is a security allow-list which may
     # hold several entries, while this is the one canonical place to send someone

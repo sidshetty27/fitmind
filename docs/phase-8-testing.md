@@ -37,11 +37,12 @@ All in **test mode** — check the toggle before starting.
 | # | Step | Expected result |
 |---|---|---|
 | 0.5 | Create a Stripe account (or use an existing one) at dashboard.stripe.com | Test mode available |
-| 0.6 | Product catalog → **Add a product**. Name it "FitMind Premium", add a **recurring** monthly price | Product created |
+| 0.6 | Product catalog → **Add a product**. Name it "FitMind Premium", add a **recurring** monthly price. Leave the **tax behaviour** unset | Product created. ⚠️ `tax_behavior` cannot be changed once set to inclusive or exclusive — that field is a one-way door on a Price, and the only fix afterwards is creating a new Price. Unset, it follows the account-level default, which *can* be changed later. FitMind collects no tax (see Known limitations), so leaving it alone is what keeps the choice open |
 | 0.7 | Copy the **price** id — `price_...`, from the pricing section of the product | ⚠️ Not the `prod_...` id, which is the easier one to grab by mistake. A `prod_` here fails at checkout, not at boot, with "No such price" |
-| 0.8 | Developers → API keys → **Create restricted key**. Grant only: **Customers** Write, **Checkout Sessions** Write, **Billing Portal Sessions** Write, **Subscriptions** Write. Everything else None. Copy the `rk_test_...` | ✅ A restricted key, not the account secret key. The app makes exactly five calls (all in `app/core/stripe_client.py`) and those four permissions cover them. A leaked `sk_` can refund charges and read every customer; a leaked key scoped like this cannot |
+| 0.8 | Developers → API keys → **Create restricted key** → **Choose your own**. Grant only: **Customers** Write (Core), **Checkout Sessions** Write, **Customer Portal** Write (Billing), **Subscriptions** Write (Billing). Everything else None. Copy the `rk_test_...` | ✅ A restricted key, not the account secret key. The app makes exactly five calls (all in `app/core/stripe_client.py`) and those four permissions cover them. A leaked `sk_` can refund charges and read every customer; a leaked key scoped like this cannot.<br><br>⚠️ The portal permission is listed as **Customer Portal**, not "Billing Portal Sessions" — searching the filter for the API's name returns nothing. Take **Choose your own** rather than the "Recurring subscriptions and billing" template, which grants 40 permissions.<br><br>⚠️ Do not confuse **Customers** with *Customer Sessions*, or **Subscriptions** with *Subscription Settings* (Connect) / *Financial Connections Subscriptions*. All four wrong rows sit next to the right ones |
 | 0.9 | Set `STRIPE_SECRET_KEY` (to the `rk_`) and `STRIPE_PRICE_ID` in `backend/.env` | Saved. ⚠️ The variable is named for the slot, not the key type — an `rk_` belongs here |
 | 0.9a | Work through sections 2 and 3 and watch for **403**s | ✅ None. A 403 means a permission is missing rather than that the key is wrong — add it in the Dashboard and retry. Stripe's own migration guidance is to watch `stripe logs tail` while exercising the integration |
+| 0.9b | If checkout **500**s with `CERTIFICATE_VERIFY_FAILED` in the backend log | ⚠️ Not a key problem. Antivirus or a corporate proxy is intercepting TLS. The Stripe SDK ships its own CA bundle and passes it as `cafile=`, which **overrides** `SSL_CERT_FILE` rather than deferring to it — so Stripe fails while Clerk and Anthropic, which honour the system store, keep working. That split is the tell. Set `STRIPE_CA_BUNDLE` to a bundle containing the interceptor's root and restart. Confirm which bundle is at fault before editing anything:<br><br>`python -c "import stripe,httpx; print(httpx.get('https://api.stripe.com/v1/customers', verify=stripe.ca_bundle_path).status_code)"`<br><br>**401 means TLS is fine** (unauthenticated, as expected); a `ConnectError` reproduces the bug |
 
 ### 0c. Local webhook forwarding
 
@@ -241,13 +242,13 @@ Run before committing:
 cd frontend && npx tsc --noEmit     # expect: no output
 cd frontend && npm run lint         # expect: no output
 cd frontend && npm run build        # expect: ✓ Compiled successfully, /dashboard/settings listed
-cd backend  && .venv\Scripts\python -m pytest -q   # expect: 194 passed, 6 skipped
+cd backend  && .venv\Scripts\python -m pytest -q   # expect: 197 passed, 6 skipped
 ```
 
 ⚠️ The 6 skips need a live database; they opt in via `TEST_DATABASE_URL` (see
 `tests/conftest.py`).
 
-None of the 194 tests touch Stripe's API or a database. That is deliberate — they
+None of the 197 tests touch Stripe's API or a database. That is deliberate — they
 cover the decisions (what counts as premium, what a refusal returns, how an event
 maps to a row) rather than the integration. **Sections 0–7 above are the only
 thing that tests the integration**, and they cannot be automated away.
@@ -277,6 +278,16 @@ Four files, if you need to change a rule rather than find a bug:
   stored per checkout rather than read from config.
 - **No proration or plan switching in-app.** Stripe's portal handles it if the
   product is configured for it; FitMind neither offers nor blocks it.
+- **No tax is calculated or collected.** `automatic_tax` is deliberately off, so
+  the listed price is exactly what is charged and no tax line appears. Stripe
+  Tax collects only where the account holds an active *registration*, and
+  enabling it without one fails silently — Stripe returns an ordinary session
+  and charges no tax, leaving an integration that looks compliant and collects
+  nothing. Registration is a legal step taken with a tax authority, not a code
+  change, so this stays off until there is revenue that warrants it. The order
+  to enable it: register, record the registration in Stripe until it reads
+  *Collecting*, then add the parameter — see `create_checkout_session`, which
+  also documents the saved-address trap this integration specifically has.
 - **No dunning emails from FitMind.** Stripe sends its own. A `past_due` user
   sees the warning only when they visit Settings.
 - **No invoice history in-app.** The portal has it, and it is always correct

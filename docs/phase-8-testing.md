@@ -37,7 +37,7 @@ All in **test mode** — check the toggle before starting.
 | # | Step | Expected result |
 |---|---|---|
 | 0.5 | Create a Stripe account (or use an existing one) at dashboard.stripe.com | Test mode available |
-| 0.6 | Product catalog → **Add a product**. Name it "FitMind Premium", add a **recurring** monthly price | Product created |
+| 0.6 | Product catalog → **Add a product**. Name it "FitMind Premium", add a **recurring** monthly price. Leave the **tax behaviour** unset | Product created. ⚠️ `tax_behavior` cannot be changed once set to inclusive or exclusive — that field is a one-way door on a Price, and the only fix afterwards is creating a new Price. Unset, it follows the account-level default, which *can* be changed later. FitMind collects no tax (see Known limitations), so leaving it alone is what keeps the choice open |
 | 0.7 | Copy the **price** id — `price_...`, from the pricing section of the product | ⚠️ Not the `prod_...` id, which is the easier one to grab by mistake. A `prod_` here fails at checkout, not at boot, with "No such price" |
 | 0.8 | Developers → API keys → **Create restricted key**. Grant only: **Customers** Write, **Checkout Sessions** Write, **Billing Portal Sessions** Write, **Subscriptions** Write. Everything else None. Copy the `rk_test_...` | ✅ A restricted key, not the account secret key. The app makes exactly five calls (all in `app/core/stripe_client.py`) and those four permissions cover them. A leaked `sk_` can refund charges and read every customer; a leaked key scoped like this cannot |
 | 0.9 | Set `STRIPE_SECRET_KEY` (to the `rk_`) and `STRIPE_PRICE_ID` in `backend/.env` | Saved. ⚠️ The variable is named for the slot, not the key type — an `rk_` belongs here |
@@ -277,6 +277,16 @@ Four files, if you need to change a rule rather than find a bug:
   stored per checkout rather than read from config.
 - **No proration or plan switching in-app.** Stripe's portal handles it if the
   product is configured for it; FitMind neither offers nor blocks it.
+- **No tax is calculated or collected.** `automatic_tax` is deliberately off, so
+  the listed price is exactly what is charged and no tax line appears. Stripe
+  Tax collects only where the account holds an active *registration*, and
+  enabling it without one fails silently — Stripe returns an ordinary session
+  and charges no tax, leaving an integration that looks compliant and collects
+  nothing. Registration is a legal step taken with a tax authority, not a code
+  change, so this stays off until there is revenue that warrants it. The order
+  to enable it: register, record the registration in Stripe until it reads
+  *Collecting*, then add the parameter — see `create_checkout_session`, which
+  also documents the saved-address trap this integration specifically has.
 - **No dunning emails from FitMind.** Stripe sends its own. A `past_due` user
   sees the warning only when they visit Settings.
 - **No invoice history in-app.** The portal has it, and it is always correct

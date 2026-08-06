@@ -238,6 +238,30 @@ async def create_checkout_session(
     dynamic payment methods on, so the methods offered are whatever the Dashboard
     has enabled and the customer is eligible for. Hardcoding `["card"]` — the
     obvious-looking thing to write — silently narrows that to cards forever.
+
+    **Also not passed: `automatic_tax`.** This one is a decision, not an
+    omission. Stripe Tax collects only in jurisdictions where the account holds
+    an *active* registration, and enabling it without one is not an error:
+    Stripe calculates nothing, charges nothing, and returns a perfectly ordinary
+    session. The integration then looks tax-compliant while collecting zero tax,
+    and no test, log, or type can tell you — the only thing that changes the
+    outcome is a registration, which is a legal act performed outside this repo.
+    Shipping `"automatic_tax": {"enabled": True}` as a gesture toward
+    correctness would be strictly worse than shipping nothing, because nothing
+    is at least honest about what it does.
+
+    Turning it on is three steps in this order: register with the tax authority,
+    record that registration in Stripe until it reads *Collecting*, and only
+    then add the parameter here. Doing only the third is the most common way
+    this goes wrong.
+
+    One trap specific to *this* integration when that day comes. We pass
+    `customer` rather than `customer_email`, and for a known customer Checkout
+    taxes their **saved** address — so a customer created by `create_customer`
+    below, which saves no address, gives Stripe Tax nothing to compute against.
+    Enabling tax here therefore also means `"customer_update": {"address":
+    "auto"}` *and* making sure Checkout actually collects an address, or it
+    quietly keeps using the saved one that is not there.
     """
     session = await _client().v1.checkout.sessions.create_async(
         params={

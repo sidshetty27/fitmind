@@ -285,9 +285,13 @@ Four files, if you need to change a rule rather than find a bug:
   and charges no tax, leaving an integration that looks compliant and collects
   nothing. Registration is a legal step taken with a tax authority, not a code
   change, so this stays off until there is revenue that warrants it. The order
-  to enable it: register, record the registration in Stripe until it reads
+  to enable it: set a head office address in Stripe's tax settings, register
+  with the authority, record that registration in Stripe until it reads
   *Collecting*, then add the parameter — see `create_checkout_session`, which
-  also documents the saved-address trap this integration specifically has.
+  also documents the address-fallback trap this integration specifically has.
+  Skipping the head office address leaves the settings at `pending`, where
+  `automatic_tax` calculates nothing and looks exactly like a missing
+  registration.
 - **No dunning emails from FitMind.** Stripe sends its own. A `past_due` user
   sees the warning only when they visit Settings.
 - **No invoice history in-app.** The portal has it, and it is always correct

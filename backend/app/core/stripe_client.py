@@ -36,6 +36,20 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+# Trust a caller-supplied CA bundle instead of the one the SDK ships, when the
+# deployment asks for it. Applied once here rather than per call because
+# `ca_bundle_path` is a module-level global on the SDK, read when it builds its
+# HTTP client — setting it inside `_client()` would be the same assignment
+# repeated on every request.
+#
+# This exists for machines running TLS-intercepting antivirus, where the
+# interceptor's root is in the system trust store but not in Stripe's bundle,
+# and the SDK's `cafile=` beats `SSL_CERT_FILE`. See `config.stripe_ca_bundle`.
+# Unset in production, where the SDK's own bundle is what should be trusted.
+if settings.stripe_ca_bundle:
+    stripe.ca_bundle_path = settings.stripe_ca_bundle
+    logger.info("Stripe CA bundle overridden: %s", settings.stripe_ca_bundle)
+
 # Tags every Checkout Session this app creates, so the Dashboard can report on
 # this flow separately from any other checkout the account ever runs.
 #

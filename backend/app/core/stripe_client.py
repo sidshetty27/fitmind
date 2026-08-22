@@ -264,18 +264,30 @@ async def create_checkout_session(
     correctness would be strictly worse than shipping nothing, because nothing
     is at least honest about what it does.
 
-    Turning it on is three steps in this order: register with the tax authority,
-    record that registration in Stripe until it reads *Collecting*, and only
-    then add the parameter here. Doing only the third is the most common way
-    this goes wrong.
+    Turning it on is four steps in this order: set a head office address in
+    Stripe's tax settings, register with the tax authority, record that
+    registration in Stripe until it reads *Collecting*, and only then add the
+    parameter here. Each of the first three fails quietly if skipped — without
+    the head office address the tax settings sit at `pending` and nothing is
+    calculated, exactly as if no registration existed. Doing only the last step
+    is the most common way this goes wrong.
 
     One trap specific to *this* integration when that day comes. We pass
     `customer` rather than `customer_email`, and for a known customer Checkout
-    taxes their **saved** address — so a customer created by `create_customer`
-    below, which saves no address, gives Stripe Tax nothing to compute against.
+    taxes their **saved** address — which `create_customer` below never sets.
+    Stripe then works down a fallback chain: shipping address, the customer's
+    billing address, the payment method's billing details, and finally their IP.
+    It takes the *first* of those it finds, so tax would be computed from
+    whatever the chain lands on rather than from nothing — which is the worse
+    failure. Geolocation is a guess, and a wrong jurisdiction is a wrong rate on
+    a real invoice, arrived at silently.
+
     Enabling tax here therefore also means `"customer_update": {"address":
     "auto"}` *and* making sure Checkout actually collects an address, or it
-    quietly keeps using the saved one that is not there.
+    quietly keeps using the saved one that is not there. Note also that the
+    chain stops at the first address it finds even when that address is
+    unusable: an invalid one raises `customer_tax_location_invalid` and fails
+    the whole request rather than falling through to the next source.
     """
     session = await _client().v1.checkout.sessions.create_async(
         params={

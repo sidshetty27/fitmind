@@ -39,6 +39,20 @@ Thumbs.db
 .vscode/*
 !.vscode/extensions.json
 
+# ---------- Agent skills & local tool config ----------
+# Installed by `npx skills add <url>`, which vendors the fetched skills into the
+# repo. Kept out of git: they are re-fetchable from their source, they carry no
+# project decisions, and 29 files of third-party prose in the tree makes every
+# diff harder to read than the skills are worth here.
+#
+# Commit them instead if collaborators ever need byte-identical versions — that
+# is what skills-lock.json pins. Ignoring the lock file too, since pinning is
+# only useful alongside the files it pins.
+.agents/
+.claude/skills/
+.claude/settings.local.json
+skills-lock.json
+
 # ---------- Misc ----------
 coverage/
 .cache/

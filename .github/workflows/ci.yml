@@ -86,3 +86,61 @@ jobs:
       # than prerendering, so nothing reaches Clerk at build time.
       - name: Build
         run: npm run build
+
+  # The deployment artifact, built and booted (Phase 9).
+  #
+  # `pytest` proves the code is correct; it says nothing about whether the thing
+  # Render actually runs will start. Those fail differently — a missing wheel, a
+  # CRLF shebang, a bind to the wrong interface — and without this job you find
+  # out from a crash-looping deploy instead of from a pull request.
+  image:
+    name: backend (docker build + boot)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build the image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          load: true
+          tags: fitmind-api:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Boot it and require a real 200 from the liveness probe.
+      #
+      # RUN_MIGRATIONS=false because there is no database here: the point is to
+      # prove the image starts, binds $PORT on 0.0.0.0, and serves — not to
+      # re-test Alembic. DATABASE_URL is still required for Settings to
+      # validate, so it gets a syntactically valid DSN that is never connected
+      # to. PORT is deliberately not 8000, which is what would catch the
+      # entrypoint hardcoding a port instead of reading the platform's.
+      - name: Boot it and probe /health
+        run: |
+          docker run -d --name api \
+            -e DATABASE_URL='postgresql://u:p@127.0.0.1:5432/db' \
+            -e RUN_MIGRATIONS=false \
+            -e PORT=9137 \
+            -p 9137:9137 \
+            fitmind-api:ci
+
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:9137/health > /tmp/health.json; then
+              echo "healthy after ${i}s:"; cat /tmp/health.json; exit 0
+            fi
+            sleep 1
+          done
+
+          echo "::error::container never answered /health"
+          docker logs api
+          exit 1
+
+      - name: Container logs
+        if: ${{ failure() }}
+        run: docker logs api

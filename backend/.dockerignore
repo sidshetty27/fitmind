@@ -1,0 +1,35 @@
+# The build context is `backend/`, so these are relative to it.
+#
+# Two of these entries are load-bearing rather than housekeeping:
+#
+#   .env      — the image is a build artifact that gets pushed to a registry.
+#               Baking real Supabase, Clerk, and Stripe credentials into a layer
+#               puts them somewhere `docker history` can read them back out, and
+#               deleting the file in a later layer does not remove it from the
+#               earlier one. Config arrives as environment variables at runtime.
+#   .venv/    — a Windows virtualenv full of win32 wheels, which would both
+#               balloon the image and shadow the Linux packages pip just
+#               installed if it landed on top of them.
+
+.env
+.env.*
+!.env.example
+
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# Tests run in CI against the source tree, not in the image. Leaving them out
+# keeps the runtime surface to what actually serves traffic.
+tests/
+.pytest_cache/
+pytest.ini
+
+# The local dev launcher — its only job is the Windows event-loop policy, and
+# the container starts uvicorn through docker-entrypoint.sh instead.
+run.py
+
+README.md
+Dockerfile
+.dockerignore

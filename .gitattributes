@@ -1,9 +1,15 @@
-# Git hooks must keep LF endings.
+# Shell scripts must keep LF endings.
 #
 # On Windows, `core.autocrlf` rewrites checked-out files to CRLF. For a shell
 # script that corrupts the shebang — the interpreter path becomes `/bin/sh\r`,
-# and the hook fails with "bad interpreter: No such file or directory". The hook
-# then does not run, which is the one failure mode a secret-scanning hook must
-# never have: it fails open, silently, on exactly the platform this repo is
-# developed on.
+# and the script fails with "bad interpreter: No such file or directory".
+#
+# For the git hooks that means failing *open*, silently: the hook does not run,
+# and a secret-scanning hook that quietly stops scanning is worse than none, on
+# exactly the platform this repo is developed on.
 .githooks/* text eol=lf
+
+# For the container entrypoint the same rewrite is what makes an image built on
+# Windows crash-loop on Render with `exec ./docker-entrypoint.sh: no such file
+# or directory` — pointing at a file that is plainly right there in the image.
+backend/docker-entrypoint.sh text eol=lf

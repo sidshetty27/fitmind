@@ -1,0 +1,110 @@
+# Render Blueprint — the FitMind API as infrastructure-as-code.
+#
+# Render reads this from the repo root. Creating the service from a Blueprint
+# rather than clicking through the dashboard means the deployment's shape is
+# reviewable in a pull request and reproducible into a second environment; the
+# only thing that lives outside git is the secret values.
+#
+# The frontend is NOT here. It deploys to Vercel, which is its own config
+# (docs/deployment.md). Rendering Next.js on Render as well would work and would
+# throw away the CDN, image optimisation, and edge caching that Vercel gives the
+# framework it maintains.
+
+services:
+  - name: fitmind-api
+    type: web
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+
+    # 512MB / 0.1 CPU, and it spins down after 15 minutes without traffic — the
+    # next request then waits ~1 minute for a cold start. That is survivable for
+    # a portfolio deployment and is the reason the frontend's loading states and
+    # error boundaries matter; it is the first thing to change (`plan: starter`)
+    # if this ever needs to feel instant.
+    plan: free
+    region: oregon
+
+    # Liveness, not readiness — `/health` deliberately does no database I/O.
+    # Pointing this at `/health/db` instead would mean a transient Supabase blip
+    # fails the health check, Render restarts the container, and a recoverable
+    # database problem becomes an outage while the restarts pile more connection
+    # attempts onto the struggling database. See app/api/routes/health.py.
+    healthCheckPath: /health
+
+    # `checksPass`, not `commit`: this repo has CI on every push to main, so the
+    # useful trigger is "main is green", not "main moved". Deploying on commit
+    # would race the test run and can promote a build the suite is about to fail.
+    # (`autoDeploy` is the deprecated spelling of this.)
+    autoDeployTrigger: checksPass
+
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+
+      # Far too noisy for production — every statement to stdout.
+      - key: DB_ECHO
+        value: "false"
+
+      # ----------------------------------------------------------------------
+      # Everything below is `sync: false`: Render prompts for the value on first
+      # deploy and stores it encrypted, instead of it living in this file. That
+      # is what makes this blueprint safe to commit.
+      # ----------------------------------------------------------------------
+
+      # Supabase → Connection string. Two URLs, and they are not interchangeable:
+      #   DATABASE_URL           transaction pooler, port 6543 — per-request
+      #   MIGRATION_DATABASE_URL session pooler / direct, port 5432 — DDL
+      # Alembic cannot run through the transaction pooler; see config.py. Prefer
+      # the *session pooler* over the direct connection here: Supabase's direct
+      # host is IPv6-only, which a cloud host may not be able to reach.
+      - key: DATABASE_URL
+        sync: false
+      - key: MIGRATION_DATABASE_URL
+        sync: false
+
+      # The deployed frontend origin, e.g. https://fitmind.vercel.app.
+      # CORS_ORIGINS is the browser allow-list; FRONTEND_URL is the single place
+      # Stripe sends someone back to. Kept separate on purpose — one is a
+      # security list that may hold several entries, the other is a destination.
+      # Leave FRONTEND_URL on localhost and checkout returns paying users to a
+      # machine that is not running.
+      - key: CORS_ORIGINS
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+
+      # Clerk. The issuer is the **production** Frontend API URL — the instance
+      # that mints the tokens the browser will send. A backend still pointed at
+      # the dev issuer rejects every production token as an invalid signature.
+      - key: CLERK_ISSUER
+        sync: false
+      - key: CLERK_AUTHORIZED_PARTIES
+        sync: false
+      - key: CLERK_SECRET_KEY
+        sync: false
+      - key: CLERK_WEBHOOK_SECRET
+        sync: false
+
+      # Optional. Unset means the coach still returns its computed findings with
+      # no written narrative, rather than erroring.
+      - key: ANTHROPIC_API_KEY
+        sync: false
+
+      # Optional. Unset means every user is free tier and the upgrade button is
+      # hidden rather than broken. Use a restricted key (`rk_...`) scoped to the
+      # four permissions in backend/.env.example, not the account secret key.
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_PRICE_ID
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+
+    # Migrations run from docker-entrypoint.sh instead, because this field needs
+    # a paid instance type. Uncomment it — and set RUN_MIGRATIONS=false — on the
+    # day this moves off free. Doing so is also what makes running more than one
+    # instance safe: a pre-deploy command runs once per deploy, while the
+    # entrypoint runs once per container.
+    #
+    # preDeployCommand: alembic upgrade head

@@ -96,9 +96,16 @@ def test_missing_headers_are_rejected() -> None:
         )
 
 
-async def test_webhook_refuses_when_unconfigured(client: AsyncClient) -> None:
-    """No signing secret must fail closed (503), never accept unverified data."""
-    assert settings.clerk_webhook_secret is None
+async def test_webhook_refuses_when_unconfigured(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No signing secret must fail closed (503), never accept unverified data.
+
+    The secret is pinned to None rather than asserted to be None: `settings`
+    comes from `backend/.env`, so asserting would make this test report "Clerk
+    is configured on this machine" as a failure of the endpoint.
+    """
+    monkeypatch.setattr(settings, "clerk_webhook_secret", None)
     response = await client.post("/api/webhooks/clerk", content=b"{}")
     assert response.status_code == 503
 

@@ -81,6 +81,20 @@ def configured(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "stripe_secret_key", "sk_test_dummy")
 
 
+@pytest.fixture
+def unconfigured(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The absence of configuration, stated rather than assumed.
+
+    `settings` is loaded from `backend/.env`, so a test that just *hopes* Stripe
+    is unset passes in CI (no `.env` there) and fails on any machine with real
+    keys — and fails as a 400 from signature verification, which reads like a
+    signing bug rather than a missing fixture. Pinning both halves to None makes
+    the fail-closed path reachable wherever the suite runs.
+    """
+    monkeypatch.setattr(settings, "stripe_webhook_secret", None)
+    monkeypatch.setattr(settings, "stripe_secret_key", None)
+
+
 def _envelope(body: dict) -> dict:
     """Wrap an event body in the fields every real Stripe delivery carries.
 
@@ -194,7 +208,9 @@ def test_a_one_off_payment_session_references_no_subscription() -> None:
 # ------------------------------------------------------------------- endpoint
 
 
-async def test_unconfigured_webhook_fails_closed(client: AsyncClient) -> None:
+async def test_unconfigured_webhook_fails_closed(
+    client: AsyncClient, unconfigured
+) -> None:
     """No secret must mean "reject", never "trust whatever arrived"."""
     response = await _post(client, {"type": "customer.subscription.updated"})
     assert response.status_code == 503

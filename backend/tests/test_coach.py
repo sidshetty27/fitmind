@@ -136,16 +136,16 @@ def test_rendering_joins_headline_and_notes_as_prose() -> None:
 # ------------------------------------------------------------ graceful degrading
 
 
-def test_no_api_key_yields_no_narrative_rather_than_an_error(monkeypatch) -> None:
+async def test_no_api_key_yields_no_narrative_rather_than_an_error(monkeypatch) -> None:
     """The whole reason findings are computed rather than generated: with no
     model configured the feature still works."""
     monkeypatch.setattr(settings, "anthropic_api_key", None)
-    assert coach.generate_narrative([_finding()]) == (None, None)
+    assert await coach.generate_narrative([_finding()]) == (None, None)
 
 
-def test_summarise_returns_findings_even_with_no_model(monkeypatch) -> None:
+async def test_summarise_returns_findings_even_with_no_model(monkeypatch) -> None:
     monkeypatch.setattr(settings, "anthropic_api_key", None)
-    payload = coach.summarise([_finding()])
+    payload = await coach.summarise([_finding()])
     assert payload["narrative"] is None
     assert payload["model"] is None
     assert len(payload["findings"]) == 1
@@ -154,21 +154,26 @@ def test_summarise_returns_findings_even_with_no_model(monkeypatch) -> None:
     assert payload["findings"][0]["statement"]
 
 
-def test_summarise_of_nothing_is_still_a_valid_payload(monkeypatch) -> None:
+async def test_summarise_of_nothing_is_still_a_valid_payload(monkeypatch) -> None:
     monkeypatch.setattr(settings, "anthropic_api_key", None)
-    assert coach.summarise([]) == {"findings": [], "narrative": None, "model": None}
+    assert await coach.summarise([]) == {"findings": [], "narrative": None, "model": None}
 
 
 # ------------------------------------------------------------ the request itself
 
 
 class _Messages:
-    """Records the request and answers happily, so the call runs to completion."""
+    """Records the request and answers happily, so the call runs to completion.
+
+    `parse` is a coroutine, mirroring `AsyncAnthropic`. That is not cosmetic: if
+    the code under test ever went back to calling it synchronously, it would get
+    an un-awaited coroutine instead of an answer and the fixture would fail.
+    """
 
     def __init__(self, captured: dict) -> None:
         self._captured = captured
 
-    def parse(self, **kwargs):
+    async def parse(self, **kwargs):
         self._captured.update(kwargs)
         return _Answer()
 
@@ -176,6 +181,10 @@ class _Messages:
 class _Client:
     def __init__(self, captured: dict) -> None:
         self.messages = _Messages(captured)
+        self.closed = False
+
+    async def close(self) -> None:
+        self.closed = True
 
 
 class _Answer:
@@ -186,16 +195,39 @@ class _Answer:
     )
 
 
-@pytest.fixture
-def request_kwargs(monkeypatch) -> dict:
-    """Run `generate_narrative` against a stand-in client, return what it sent."""
+def _stand_in(monkeypatch, client: _Client) -> _Client:
+    """Point the coach at `client`, and make the synchronous client a hard error.
+
+    The second half is what keeps this suite hermetic. `AsyncAnthropic` is the
+    only constructor stubbed, so code that built `anthropic.Anthropic` instead
+    would sail past the stub and open a real connection to api.anthropic.com —
+    turning a regression into a network call and a confusing 401 rather than the
+    failure it actually is. ci.yml promises these tests need no network; this is
+    the line that keeps that true when the code under test is wrong.
+    """
     import anthropic
 
-    captured: dict = {}
     monkeypatch.setattr(settings, "anthropic_api_key", "sk-ant-test")
-    monkeypatch.setattr(anthropic, "Anthropic", lambda **_: _Client(captured))
+    monkeypatch.setattr(anthropic, "AsyncAnthropic", lambda **_: client)
 
-    narrative, model = coach.generate_narrative([_finding()])
+    def _blocking_client(**_):
+        raise AssertionError(
+            "the coach built the synchronous Anthropic client — a model call on "
+            "the event loop stalls every other request in the worker, /health "
+            "included. Use anthropic.AsyncAnthropic and await the call."
+        )
+
+    monkeypatch.setattr(anthropic, "Anthropic", _blocking_client)
+    return client
+
+
+@pytest.fixture
+async def request_kwargs(monkeypatch) -> dict:
+    """Run `generate_narrative` against a stand-in client, return what it sent."""
+    captured: dict = {}
+    _stand_in(monkeypatch, _Client(captured))
+
+    narrative, model = await coach.generate_narrative([_finding()])
     # If this fails the fixture is broken, not the thing under test.
     assert narrative and model, "the stand-in answers, so a narrative must come back"
     return captured
@@ -239,6 +271,40 @@ def test_effort_stays_low_enough_to_disable_thinking(request_kwargs) -> None:
     is too far from the wire to see."""
     if _thinking_is_off(request_kwargs):
         assert request_kwargs["output_config"]["effort"] in {"low", "medium", "high"}
+
+
+# --------------------------------------------------------- not on the event loop
+
+
+async def test_the_model_call_never_blocks_the_event_loop(monkeypatch) -> None:
+    """The regression that gets a healthy container killed.
+
+    The API serves on one uvicorn worker, so a synchronous client here does not
+    block a thread — it blocks the *event loop*, queueing every other request in
+    the process behind a model call that takes seconds. Render's `/health` probe
+    is one of those requests, and its timeout is what decides whether the
+    container is restarted. `health.py` keeps that probe free of database I/O for
+    exactly this reason; a blocking call here defeats it from the other side.
+
+    Constructing `anthropic.Anthropic` is the whole of the regression, so that is
+    what this catches — directly, rather than by timing something flaky.
+    """
+    _stand_in(monkeypatch, _Client({}))
+
+    narrative, model = await coach.generate_narrative([_finding()])
+    assert narrative and model
+
+
+async def test_the_client_is_closed_so_connection_pools_do_not_accumulate(
+    monkeypatch,
+) -> None:
+    """Each call builds its own client, and each client owns an httpx pool. Left
+    unclosed they pile up for the life of the process — a slow leak on a 512MB
+    instance rather than an untidiness."""
+    client = _stand_in(monkeypatch, _Client({}))
+
+    await coach.generate_narrative([_finding()])
+    assert client.closed, "the Anthropic client was never closed"
 
 
 # ------------------------------------------------------------------- settings
@@ -295,3 +361,75 @@ def test_only_running_an_analysis_is_metered() -> None:
     assert (
         gated[("GET", "/api/coach/analyses/{analysis_id}")] is False
     ), "reading one past analysis is metered"
+
+
+# ------------------------------------------------------- the refusal on the wire
+
+
+@pytest.fixture
+def rate_limited_app(monkeypatch):
+    """The coach endpoint with a full capacity ceiling and no database.
+
+    Overrides only the two edges — who is calling, and the session — and lets
+    `require_ai_quota` run for real against stubbed counts. The point is to
+    exercise the path a client actually meets, which the policy tests deliberately
+    do not: they call the dependency as a function, where a response header does
+    not exist yet.
+    """
+    import uuid
+
+    from app.core import entitlements
+    from app.core.auth import get_current_user
+    from app.core.config import settings
+    from app.db.session import get_db
+    from app.main import app
+    from app.models.user import User
+
+    user = User(id=uuid.uuid4(), clerk_id="user_test", email="t@example.com")
+
+    async def _count_all_since(db, *, since):
+        return settings.ai_rate_limit_global_daily
+
+    async def _oldest_all(db, *, since):
+        # Twenty minutes into a day-long window, so Retry-After is a real
+        # interval rather than the window's full length.
+        from datetime import datetime, timedelta, timezone
+
+        return datetime.now(timezone.utc) - timedelta(minutes=20)
+
+    monkeypatch.setattr(entitlements.analysis_crud, "count_all_since", _count_all_since)
+    monkeypatch.setattr(
+        entitlements.analysis_crud, "oldest_created_at_all_since", _oldest_all
+    )
+
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: None
+    try:
+        yield app
+    finally:
+        app.dependency_overrides.clear()
+
+
+async def test_a_rate_limited_run_answers_429_with_a_usable_retry_after(
+    client, rate_limited_app
+) -> None:
+    """`HTTPException(headers=...)` reaching the wire is the part worth proving.
+
+    A Retry-After the dependency sets and the framework drops would leave the
+    limiter looking correct in every unit test and still teaching clients to
+    retry immediately — which is the failure the header exists to prevent.
+    """
+    response = await client.post("/api/coach/analyses")
+
+    assert response.status_code == 429
+    assert "retry-after" in response.headers, "the header never reached the client"
+
+    retry_after = int(response.headers["retry-after"])
+    assert retry_after > 0
+
+    detail = response.json()["detail"]
+    assert detail["code"] == "ai_capacity_reached"
+    assert detail["retry_after_seconds"] == retry_after
+    # A refusal that names the deployment's ceiling must not read as a billing
+    # problem — nothing this user can buy would change the answer.
+    assert "upgrade" not in detail["message"].lower()

@@ -15,6 +15,17 @@ nice-to-have on top of findings that already stand on their own. A missing API
 key, a rate limit, a refusal, or a network blip should cost the user their
 coaching *voice*, not their analysis — so `generate_narrative` returns `None` and
 the caller stores the findings with `narrative = NULL`.
+
+**Why the client is `AsyncAnthropic` and not `Anthropic`.** The synchronous
+client blocks the thread it is called on, and it is called from an `async def`
+route — so it blocks the *event loop*, not a worker. The API serves on a single
+uvicorn worker (`docker-entrypoint.sh`), which means one coach run would stall
+every other request in the process for the length of a model call: other users'
+pages, and Render's `/health` probe. `health.py` goes out of its way to keep that
+probe free of database I/O so a slow dependency cannot trigger a restart loop;
+a blocking call here would defeat that from the other side, timing out the probe
+and getting a healthy container killed. `stripe_client.py` states the same rule
+for the same reason — every outbound call in this app is awaited.
 """
 
 from __future__ import annotations
@@ -121,7 +132,7 @@ def _verify(narrative: CoachNarrative, findings: list[Finding]) -> bool:
     return True
 
 
-def generate_narrative(findings: list[Finding]) -> tuple[str | None, str | None]:
+async def generate_narrative(findings: list[Finding]) -> tuple[str | None, str | None]:
     """Return `(narrative, model)`, or `(None, None)` when unavailable.
 
     Never raises. Callers store what they get: findings with a narrative when the
@@ -136,10 +147,10 @@ def generate_narrative(findings: list[Finding]) -> tuple[str | None, str | None]
         logger.warning("anthropic package is not installed; skipping narrative")
         return None, None
 
-    client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+    client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
 
     try:
-        response = client.messages.parse(
+        response = await client.messages.parse(
             model=settings.anthropic_model,
             max_tokens=MAX_TOKENS,
             # Off deliberately, and it has to be explicit: on current models
@@ -164,6 +175,13 @@ def generate_narrative(findings: list[Finding]) -> tuple[str | None, str | None]
     except anthropic.APIConnectionError:
         logger.warning("Coach model unreachable; returning findings only")
         return None, None
+    finally:
+        # Each call builds its own client, and each client owns an httpx
+        # connection pool. Without this the pools accumulate for the life of the
+        # process — which on a 512MB instance is a slow leak, not a tidiness
+        # point. Safe in `finally` because everything read below is already
+        # materialised on `response`.
+        await client.close()
 
     # A safety decline arrives as a normal 200 with an empty or partial body, so
     # this has to be checked before touching the parsed output.
@@ -190,9 +208,9 @@ def _render(narrative: CoachNarrative) -> str:
     return "\n\n".join(part for part in parts if part)
 
 
-def summarise(findings: list[Finding]) -> dict[str, Any]:
+async def summarise(findings: list[Finding]) -> dict[str, Any]:
     """One call for the route: findings as stored, plus a narrative if available."""
-    narrative, model = generate_narrative(findings)
+    narrative, model = await generate_narrative(findings)
     return {
         "findings": [finding.as_dict() for finding in findings],
         "narrative": narrative,

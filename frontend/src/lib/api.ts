@@ -19,7 +19,36 @@
  * component ever hand-builds a fetch.
  */
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+/**
+ * The API origin, inlined at build time because it is `NEXT_PUBLIC_*`.
+ *
+ * The localhost fallback is right for `next dev` and dangerous in a production
+ * build: with the variable unset the build still succeeds, and every visitor's
+ * browser then calls port 8000 on *their own machine*. Nothing errors at build
+ * time, nothing looks wrong in the deploy log, and the app is simply broken for
+ * everyone — the worst shape a misconfiguration can take.
+ *
+ * So the fallback is scoped to development explicitly. A production build with
+ * no `NEXT_PUBLIC_API_URL` is a configuration error, and `next.config.ts` fails
+ * the build over it before this module is ever reached. This check is the same
+ * rule stated where the fallback lives, so the two cannot drift apart and so
+ * this module is safe to import from anywhere on its own terms.
+ */
+const API_URL =
+  process.env.NEXT_PUBLIC_API_URL ??
+  (process.env.NODE_ENV === "production"
+    ? // Unreachable via `next build` (next.config.ts stops it first). Reached
+      // only by a bundler or test harness that skipped that config.
+      (() => {
+        throw new Error(
+          "NEXT_PUBLIC_API_URL is required in a production build. Without it " +
+            "the deployed app would call http://localhost:8000 in the " +
+            "visitor's browser. Set it in Vercel → Settings → Environment " +
+            "Variables and redeploy — it is inlined at build time, so changing " +
+            "it without a rebuild has no effect.",
+        );
+      })()
+    : "http://localhost:8000");
 
 /** Thrown for any non-2xx response, carrying the status and parsed detail. */
 export class ApiError extends Error {

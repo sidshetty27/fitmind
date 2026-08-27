@@ -66,7 +66,7 @@ async def run_analysis(
         weeks=weeks or settings.coach_window_weeks,
     )
     results = findings_engine.analyse(summary, today)
-    narrative, model = coach_ai.generate_narrative(results)
+    narrative, model = await coach_ai.generate_narrative(results)
 
     return await analysis_crud.create_analysis(
         db,

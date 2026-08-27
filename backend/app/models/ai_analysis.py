@@ -78,10 +78,16 @@ class AiAnalysis(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         CheckConstraint(
             "(narrative IS NULL) = (model IS NULL)", name="narrative_model_together"
         ),
-        # The two queries this table has: "this user's history, newest first" and
-        # "how many has this user run recently" (the quota check). Both are served
-        # by one composite index.
+        # "This user's history, newest first" and "how many has this user run
+        # recently" (the quota and per-user rate check). Both served by one
+        # composite index.
         Index("ix_ai_analyses_user_id_created_at", "user_id", "created_at"),
+        # The global rate limit counts runs by *everyone* in the last day, so it
+        # has no user_id to lead with and cannot use the index above for a range
+        # scan. Without this it degrades to reading the whole table — on the one
+        # query that runs before every coach request, which is precisely the
+        # request already about to be the most expensive thing the app does.
+        Index("ix_ai_analyses_created_at", "created_at"),
     )
 
     def __repr__(self) -> str:

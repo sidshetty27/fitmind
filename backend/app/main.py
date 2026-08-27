@@ -59,9 +59,18 @@ app = FastAPI(title=settings.app_name, version="0.4.0", lifespan=lifespan)
 
 # CORS: the browser blocks cross-origin requests unless the API explicitly allows
 # the frontend origin. We drive the allow-list from settings so prod can differ.
+#
+# Two inputs, because production has two kinds of frontend origin. `CORS_ORIGINS`
+# is the literal list — localhost in development, the Vercel production domain
+# once deployed. `CORS_ORIGIN_REGEX` covers the origins whose hostname is
+# generated and so cannot be listed: Vercel gives every branch a preview
+# deployment at a per-branch hostname, and without a pattern those previews build
+# and deploy successfully and then fail on their first API call. Left unset it
+# changes nothing; see config.py for why the pattern must be narrow.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
+    allow_origin_regex=settings.cors_origin_regex,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

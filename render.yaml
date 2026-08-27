@@ -74,6 +74,21 @@ services:
       - key: FRONTEND_URL
         sync: false
 
+      # Optional, and only useful once Vercel previews exist. Vercel gives every
+      # branch a preview deployment at a generated hostname, which no literal
+      # allow-list can hold — so without a pattern here, every preview deploy
+      # builds, deploys, looks fine, and fails on its first API call.
+      #
+      # Must be narrow. `.*\.vercel\.app` matches every deployment on Vercel,
+      # not yours; app/core/config.py refuses that shape at boot. Include the
+      # project and team slug:
+      #   ^https://fitmind-git-[a-z0-9-]+-<your-team>\.vercel\.app$
+      #
+      # Leave blank to keep previews CORS-blocked, which is a legitimate choice
+      # — just a deliberate one rather than a surprise.
+      - key: CORS_ORIGIN_REGEX
+        sync: false
+
       # Clerk. The issuer is the **production** Frontend API URL — the instance
       # that mints the tokens the browser will send. A backend still pointed at
       # the dev issuer rejects every production token as an invalid signature.
@@ -90,6 +105,20 @@ services:
       # no written narrative, rather than erroring.
       - key: ANTHROPIC_API_KEY
         sync: false
+
+      # Rate limits on the one endpoint that bills per call. Declared here with
+      # their defaults rather than left to the code, because the number that
+      # bounds an Anthropic bill should be visible in the deployment's config
+      # and changeable without a deploy.
+      #
+      # Not `sync: false`: these are not secrets, and a limit whose value lives
+      # only in a dashboard is one nobody reviews. The global one is the ceiling
+      # an attacker cannot widen by creating more accounts — a per-account quota
+      # cannot, since accounts are free. See app/core/entitlements.py.
+      - key: AI_RATE_LIMIT_PER_USER_HOURLY
+        value: "10"
+      - key: AI_RATE_LIMIT_GLOBAL_DAILY
+        value: "200"
 
       # Optional. Unset means every user is free tier and the upgrade button is
       # hidden rather than broken. Use a restricted key (`rk_...`) scoped to the

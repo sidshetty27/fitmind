@@ -15,6 +15,7 @@ The split mirrors the coach's:
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
@@ -54,6 +55,19 @@ QUOTA_WINDOW = timedelta(days=1)
 # off this rather than off the message text, so the copy can be reworded without
 # breaking the UI.
 QUOTA_ERROR_CODE = "free_tier_limit_reached"
+
+# The two rate-limit windows. Separate constants from QUOTA_WINDOW because they
+# are a different kind of rule — see the `RateLimit` docstring.
+USER_RATE_WINDOW = timedelta(hours=1)
+GLOBAL_RATE_WINDOW = timedelta(days=1)
+
+# Distinct codes, because they call for opposite responses. `rate_limited` is
+# about this caller and clears on its own within the hour. `ai_capacity_reached`
+# is about the deployment: every user is refused, and if it fires on real
+# traffic the fix is to raise `AI_RATE_LIMIT_GLOBAL_DAILY`, not to wait. Folding
+# them into one code would make the operational signal unreadable.
+RATE_LIMIT_ERROR_CODE = "rate_limited"
+CAPACITY_ERROR_CODE = "ai_capacity_reached"
 
 
 def is_premium(subscription: Subscription | None) -> bool:
@@ -162,26 +176,178 @@ async def quota_state(db: AsyncSession, *, user: User) -> QuotaState:
     )
 
 
+@dataclass(frozen=True)
+class RateLimit:
+    """One counted window, and whether it is full.
+
+    A rate limit and the free-tier quota look alike — both count runs and both
+    refuse — and they are not the same rule. The quota is *pricing*: it decides
+    what a plan includes, it exempts premium, and the remedy is to pay. A rate
+    limit is *cost control*: nothing is exempt, and the remedy is to wait. They
+    are modelled separately, and answered with different status codes, so
+    neither can quietly acquire the other's semantics.
+
+    Purely a value: the counting happens in `ai_rate_limits`, which keeps this
+    testable with plain numbers.
+    """
+
+    code: str
+    limit: int
+    used: int
+    window: timedelta
+    # Oldest run still inside the window. Its expiry is what frees a slot, so it
+    # is the only honest basis for a Retry-After.
+    oldest: datetime | None
+    message: str
+
+    @property
+    def exceeded(self) -> bool:
+        return self.used >= self.limit
+
+    def retry_after_seconds(self, *, now: datetime) -> int:
+        """Whole seconds until a slot frees, never less than one.
+
+        With no oldest run there is nothing to expire — which can only happen at
+        a limit of 0, where the window never frees anything and the answer is
+        the window itself.
+
+        Rounded up: a client that retries at the floor of a fractional second
+        arrives before the row has aged out and is refused a second time, which
+        reads as the limit being broken.
+        """
+        if self.oldest is None:
+            return max(1, int(self.window.total_seconds()))
+        remaining = (self.oldest + self.window) - now
+        return max(1, math.ceil(remaining.total_seconds()))
+
+
+async def ai_rate_limits(db: AsyncSession, *, user: User) -> list[RateLimit]:
+    """The rate limits on an AI run, in the order they should be applied.
+
+    Global first. It describes the deployment rather than the caller, so when it
+    is full the answer is the same for everyone and there is no point costing a
+    second query to find out how fast this particular user was going.
+
+    **A known imprecision, stated rather than hidden.** These counts read rows
+    that previous runs *finished* writing, and the row for this run is written
+    after the model call returns. Two requests that overlap can therefore both
+    pass the same check. The overshoot is bounded by the number of coach
+    requests in flight at once — on a single worker with 0.1 CPU, a very small
+    number — and the limits are a budget guard rather than an invariant, so this
+    is the right trade against reserving a row before the call and having to
+    reconcile the ones whose call then failed. If the ceiling ever needs to be
+    exact, that reservation is the design, not a lock.
+    """
+    now = datetime.now(timezone.utc)
+
+    global_since = now - GLOBAL_RATE_WINDOW
+    global_used = await analysis_crud.count_all_since(db, since=global_since)
+    global_limit = RateLimit(
+        code=CAPACITY_ERROR_CODE,
+        limit=settings.ai_rate_limit_global_daily,
+        used=global_used,
+        window=GLOBAL_RATE_WINDOW,
+        oldest=(
+            await analysis_crud.oldest_created_at_all_since(db, since=global_since)
+            if global_used >= settings.ai_rate_limit_global_daily
+            else None
+        ),
+        message=(
+            "The coach is at its daily limit across all users and is not "
+            "running new analyses right now. Your existing analyses are "
+            "unaffected. Please try again later."
+        ),
+    )
+    if global_limit.exceeded:
+        # Warning rather than info: on a healthy deployment this never fires, and
+        # when it does it is either an attack or a ceiling that has become too
+        # low for real traffic. Both are worth finding in a log.
+        logger.warning(
+            "AI capacity ceiling reached: %s runs in the last %s (limit %s). "
+            "Raise AI_RATE_LIMIT_GLOBAL_DAILY if this is legitimate traffic.",
+            global_used,
+            GLOBAL_RATE_WINDOW,
+            settings.ai_rate_limit_global_daily,
+        )
+        return [global_limit]
+
+    user_since = now - USER_RATE_WINDOW
+    user_used = await analysis_crud.count_since(
+        db, user_id=user.id, since=user_since
+    )
+    user_limit = RateLimit(
+        code=RATE_LIMIT_ERROR_CODE,
+        limit=settings.ai_rate_limit_per_user_hourly,
+        used=user_used,
+        window=USER_RATE_WINDOW,
+        oldest=(
+            await analysis_crud.oldest_created_at_since(
+                db, user_id=user.id, since=user_since
+            )
+            if user_used >= settings.ai_rate_limit_per_user_hourly
+            else None
+        ),
+        message=(
+            "You are running analyses faster than the coach allows. An analysis "
+            "covers twelve weeks of training, so there is little to gain from "
+            "another one this soon. Please wait a little and try again."
+        ),
+    )
+
+    return [global_limit, user_limit]
+
+
 async def require_ai_quota(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> User:
-    """Dependency: allow an AI coach run, or refuse with a 402.
+    """Dependency: allow an AI coach run, or refuse with a 429 or a 402.
 
     Drops into a route in place of `get_current_user` — it returns the same
-    `User`, so the handler body does not change.
+    `User`, so the handler body does not change. Both the rate limits and the
+    plan quota live behind this one dependency deliberately: a route either
+    takes `get_current_user` and does not run the model, or takes this and gets
+    every control at once. There is no third option to forget half of.
 
-    **402 Payment Required, not 429.** Both describe a refused request, but they
-    ask for different things: 429 says wait, 402 says pay. A user who has used
-    their three free runs is not going too fast, and telling them to slow down
-    would be a lie that hides the actual remedy. The frontend needs to render an
-    upgrade prompt for one and a "try again shortly" for the other, so the status
-    codes have to be distinguishable.
+    **The order is rate limits, then quota**, and it is not arbitrary. The rate
+    limits describe whether the deployment will spend money on this call at all;
+    the quota describes whether this user's plan includes it. Asking someone to
+    upgrade — and take their money — for a call that the capacity ceiling is
+    about to refuse anyway would be the wrong answer in the most expensive
+    possible way.
+
+    **429 and 402 are both refusals and they mean opposite things.** 429 says
+    wait, 402 says pay. A user who has spent three free runs is not going too
+    fast, and telling them to slow down hides the actual remedy; a user hitting
+    a rate limit is not short of money, and offering them an upgrade would sell
+    something that does not fix it — premium is exempt from the quota and is not
+    exempt from the rate limits. The frontend renders an upgrade prompt for one
+    and "try again shortly" for the other, so the two must stay distinguishable.
 
     The body is a dict rather than a string so the frontend can key off `code`
     instead of parsing prose. `lib/api.ts` already preserves non-string details
     on `ApiError.detail`.
     """
+    now = datetime.now(timezone.utc)
+    for limit in await ai_rate_limits(db, user=current_user):
+        if not limit.exceeded:
+            continue
+
+        retry_after = limit.retry_after_seconds(now=now)
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={
+                "code": limit.code,
+                "message": limit.message,
+                "retry_after_seconds": retry_after,
+            },
+            # The header is the half a machine reads. Without it a client that
+            # retries has no basis for choosing when, and the usual choice is
+            # immediately — which turns one refused request into a hot loop
+            # against the endpoint the limit exists to protect.
+            headers={"Retry-After": str(retry_after)},
+        )
+
     state = await quota_state(db, user=current_user)
 
     if state.exceeded:
@@ -204,9 +370,15 @@ async def require_ai_quota(
 
 
 __all__ = [
+    "CAPACITY_ERROR_CODE",
+    "GLOBAL_RATE_WINDOW",
     "PREMIUM_STATUSES",
     "QUOTA_ERROR_CODE",
+    "RATE_LIMIT_ERROR_CODE",
+    "USER_RATE_WINDOW",
     "QuotaState",
+    "RateLimit",
+    "ai_rate_limits",
     "is_premium",
     "quota_state",
     "require_ai_quota",

@@ -31,8 +31,21 @@ export interface NormalizedApiError {
    *
    * Branch on this rather than on the message — copy gets reworded, and a UI
    * that decides whether to show an upgrade prompt by matching prose breaks the
-   * first time someone improves the wording. Currently the only value is
-   * `free_tier_limit_reached`, from the quota gate.
+   * first time someone improves the wording.
+   *
+   * The values, all from the coach's gate in `app/core/entitlements.py`:
+   *
+   *   free_tier_limit_reached  402 — this plan does not include another run.
+   *                            The remedy is to upgrade.
+   *   rate_limited             429 — too fast. Applies to premium as well, so
+   *                            an upgrade prompt here would sell something
+   *                            that does not fix it. The remedy is to wait.
+   *   ai_capacity_reached      429 — the deployment is at its daily ceiling on
+   *                            model calls. Everyone is refused; nothing the
+   *                            user can do changes it.
+   *
+   * Only the first should ever produce an upgrade prompt. The two 429s carry a
+   * `retry_after_seconds` in the detail, and the response a `Retry-After`.
    */
   code?: string;
 }

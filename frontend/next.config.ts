@@ -1,4 +1,45 @@
 import type { NextConfig } from "next";
+import { PHASE_PRODUCTION_BUILD } from "next/constants";
+
+/**
+ * Fail a production build that has no API origin (Phase 9).
+ *
+ * `NEXT_PUBLIC_API_URL` is inlined into the client bundle at build time, and
+ * `lib/api.ts` falls back to `http://localhost:8000` without it. That fallback
+ * is correct for `next dev` and catastrophic in a deployment: the build
+ * succeeds, the deploy log is clean, the pages render — and every visitor's
+ * browser calls port 8000 on their own machine. There is no error anywhere to
+ * find; you discover it from the Network tab, if you think to look.
+ *
+ * A missing build input should stop the build, so it does. This runs on every
+ * `next build` regardless of which modules the page graph happens to import,
+ * which is why the check lives here rather than only in `lib/api.ts`.
+ *
+ * Deliberately gated on the build phase, not on `NODE_ENV`: `next start` and
+ * `next dev` both load this file, and neither is the moment the value gets
+ * baked in. Only the build is.
+ *
+ * Consequence worth knowing: `npm run build` now requires the variable. Locally
+ * it comes from `.env.local`; in CI, `.github/workflows/ci.yml` passes an
+ * explicit placeholder. A production build is a thing with inputs, and this is
+ * one of them.
+ */
+function requireApiUrl(phase: string): void {
+  if (phase !== PHASE_PRODUCTION_BUILD) return;
+  if (process.env.NEXT_PUBLIC_API_URL) return;
+
+  throw new Error(
+    "NEXT_PUBLIC_API_URL is not set.\n\n" +
+      "It is inlined into the client bundle at build time, so a build without " +
+      "it produces an app that calls http://localhost:8000 in the visitor's " +
+      "browser — succeeding at build time and failing for every user.\n\n" +
+      "  Vercel:  Settings → Environment Variables → NEXT_PUBLIC_API_URL\n" +
+      "           e.g. https://fitmind-api.onrender.com (no trailing slash)\n" +
+      "  Local:   set it in frontend/.env.local\n\n" +
+      "Setting it in the Vercel dashboard is not enough on its own: the value " +
+      "is baked in at build time, so an existing deployment must be rebuilt.",
+  );
+}
 
 /**
  * Response headers applied to every route (Phase 9).
@@ -67,7 +108,17 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default nextConfig;
+/**
+ * The function form of the config, so Next.js hands us the build phase. The
+ * object itself is unchanged — `requireApiUrl` is the only reason this is not
+ * still a plain `export default nextConfig`.
+ */
+const withBuildTimeChecks = (phase: string): NextConfig => {
+  requireApiUrl(phase);
+  return nextConfig;
+};
+
+export default withBuildTimeChecks;
 
 /**
  * On the Content-Security-Policy that is not here.

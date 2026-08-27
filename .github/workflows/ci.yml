@@ -84,7 +84,16 @@ jobs:
       #
       # Needs no Clerk keys: every authenticated route renders on demand rather
       # than prerendering, so nothing reaches Clerk at build time.
+      #
+      # It does need NEXT_PUBLIC_API_URL. `next.config.ts` fails a production
+      # build without one, because the value is inlined into the client bundle
+      # and its absence produces an app that calls the visitor's own machine.
+      # The placeholder is never called — nothing here makes a request — but it
+      # keeps CI exercising the same code path Vercel does, rather than a
+      # special case that would let the real failure through.
       - name: Build
+        env:
+          NEXT_PUBLIC_API_URL: https://fitmind-api.invalid
         run: npm run build
 
   # The deployment artifact, built and booted (Phase 9).

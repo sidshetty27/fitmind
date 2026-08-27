@@ -9,7 +9,16 @@ import { api } from "@/lib/api";
 import { normalizeApiError } from "@/lib/apiErrors";
 import { Button } from "@/components/ui/Button";
 
-/** The backend's machine-readable marker for a spent free allowance. */
+/**
+ * The backend's machine-readable marker for a spent free allowance.
+ *
+ * Only this one flips the button into its upgrade state. The coach's other two
+ * refusals (`rate_limited`, `ai_capacity_reached`) arrive as 429s and mean
+ * "wait", not "pay" — they apply to premium accounts too, so prompting for an
+ * upgrade would be offering to sell something that does not lift the refusal.
+ * They fall through to the error line below, which shows the server's message
+ * and leaves the button usable for the retry that will eventually work.
+ */
 const QUOTA_CODE = "free_tier_limit_reached";
 
 /**

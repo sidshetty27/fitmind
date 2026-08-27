@@ -4,6 +4,8 @@ Using pydantic-settings gives us typed, validated config with a single source of
 truth. Every deployment environment (local, Railway/Render) sets these vars.
 """
 
+import re
+
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -36,6 +38,29 @@ class Settings(BaseSettings):
 
     # Comma-separated list of origins allowed to call this API (the Next.js app).
     cors_origins: str = "http://localhost:3000"
+
+    # Optional pattern for origins that cannot be listed literally because their
+    # hostname is generated. Vercel is the case this exists for: every branch
+    # gets a preview deployment at an origin like
+    # `https://fitmind-git-my-branch-myteam.vercel.app`, which no fixed
+    # allow-list can contain. Without this, every preview deploy looks fine and
+    # fails on its first API call with a CORS error — the branch is "deployed"
+    # and unusable, and the same review that would catch it never happens.
+    #
+    # Matched with `re.fullmatch` by Starlette, so the pattern must describe the
+    # whole origin. Anchors are therefore optional; writing them anyway is worth
+    # it because the pattern reads as an allow-list rule either way.
+    #
+    # **The dangerous mistake is breadth, not anchoring.** `.*\.vercel\.app`
+    # fullmatches — and hands every Vercel user on earth a credentialed origin
+    # against this API. Include the project and team slug so the pattern
+    # describes *your* previews:
+    #
+    #   ^https://fitmind-git-[a-z0-9-]+-myteam\.vercel\.app$
+    #
+    # `_reject_overly_broad_cors_regex` below refuses the worst of these at boot
+    # rather than letting them quietly widen the allow-list.
+    cors_origin_regex: str | None = None
 
     # ---------- Database (Phase 3) ----------
     # Runtime connection. On Supabase use the **transaction pooler** (port 6543):
@@ -175,6 +200,37 @@ class Settings(BaseSettings):
     # business decision can be retuned without a code deploy. Premium is unlimited.
     free_daily_ai_analyses: int = 3
 
+    # ---------- AI rate limiting (Phase 9) ----------
+    # The two limits above and below answer different questions and are not
+    # substitutes. `free_daily_ai_analyses` is *pricing*: it decides what a plan
+    # includes, and premium is deliberately exempt. These two are *cost control*,
+    # and nothing is exempt from them.
+    #
+    # The distinction matters because the coach is the only endpoint in this app
+    # that spends money on each call, and a per-account allowance cannot bound
+    # that spend. Signing up is free and unlimited, so an attacker who wants to
+    # run up an Anthropic bill does not need to exceed anyone's quota — they need
+    # more accounts, and each new account arrives with a fresh allowance. The
+    # quota is the wrong shape for the problem entirely.
+    #
+    # Per user, per hour. Applies to premium too, which is the point: "unlimited"
+    # is a plan promise about a day's work, not a licence to run the endpoint in
+    # a loop. Also the only thing that catches a client bug retrying forever.
+    # Analyses cover a 12-week window, so a second run within the hour reflects
+    # almost no new data — 10 is generous for anything a person does deliberately.
+    ai_rate_limit_per_user_hourly: int = 10
+
+    # Across every user, per rolling day. This is the ceiling on the bill, and
+    # the only control here that an attacker cannot widen by making more
+    # accounts. Sized against the free allowance: at the default of 3/day it is
+    # roughly 66 fully-active free accounts, comfortably above any real usage
+    # this deployment will see and far below a number worth panicking about.
+    #
+    # Raise it when legitimate traffic approaches it — `/health/db` will not tell
+    # you, but a 503-free log full of `ai_capacity_reached` will. Both limits
+    # refuse everything at 0, matching `free_daily_ai_analyses`.
+    ai_rate_limit_global_daily: int = 200
+
     @property
     def ai_enabled(self) -> bool:
         """Whether a narrative can be generated at all."""
@@ -194,6 +250,60 @@ class Settings(BaseSettings):
     @classmethod
     def _coerce_driver(cls, value: str | None) -> str | None:
         return _normalise_pg_url(value) if value else value
+
+    @field_validator("cors_origin_regex")
+    @classmethod
+    def _reject_overly_broad_cors_regex(cls, value: str | None) -> str | None:
+        """Refuse a preview pattern that is wider than its author meant.
+
+        Two failures, both caught here rather than at the first preflight — a
+        CORS mistake is otherwise discovered either never (too broad) or by a
+        user (too narrow, or invalid).
+
+        The probes are the point. A pattern is only doing its job if it matches
+        this deployment's previews and nothing else, so the check is empirical:
+        compile it, then try it against origins that must never be allowed. It
+        cannot prove a pattern correct, but it catches the shapes people
+        actually write — `.*`, `.*\\.vercel\\.app`, a bare `.+` — each of which
+        turns a preview allowance into "any site may call this API with the
+        user's credentials".
+        """
+        if value is None:
+            return value
+
+        try:
+            pattern = re.compile(value)
+        except re.error as exc:
+            raise ValueError(f"CORS_ORIGIN_REGEX is not a valid regular expression: {exc}") from exc
+
+        # Origins no correct pattern can match.
+        #
+        # The fourth is the one that earns this validator. `.*\.vercel\.app`
+        # fullmatches it, and that pattern is what someone writes when they mean
+        # "our previews" — it reads as scoped and allows every deployment every
+        # Vercel user has ever created, each of which can then call this API
+        # with a signed-in user's credentials. None of the obvious probes catch
+        # it: it is not `evil.example`, and it is a perfectly well-formed
+        # `vercel.app` subdomain. It just is not *ours*.
+        #
+        # The last is suffix confusion: a hostname that ends in an attacker's
+        # domain while containing the one being allowed.
+        hostile = (
+            "https://evil.example",
+            "https://vercel.app",
+            "https://someone-elses-app.vercel.app",
+            "https://fitmind.vercel.app.evil.example",
+        )
+        matched = [origin for origin in hostile if pattern.fullmatch(origin)]
+        if matched:
+            raise ValueError(
+                f"CORS_ORIGIN_REGEX is too broad — it matches {matched}. "
+                "Include the project and team slug so it describes only this "
+                "deployment's preview origins, e.g. "
+                r"^https://fitmind-git-[a-z0-9-]+-myteam\.vercel\.app$"
+            )
+
+        return value
 
     @property
     def cors_origins_list(self) -> list[str]:

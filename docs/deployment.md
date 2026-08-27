@@ -29,6 +29,13 @@ One consequence worth internalising before you start: `NEXT_PUBLIC_API_URL` is
 inlined into the client bundle at **build** time. Changing it in Vercel's
 dashboard has no effect until you redeploy.
 
+Its *absence* is now a build failure rather than a silent one. `next.config.ts`
+stops a production build that has no API origin, because the fallback in
+`lib/api.ts` is `http://localhost:8000` — which in a deployment means every
+visitor's browser calling port 8000 on their own machine, with a clean build log
+and a rendering app to go with it. That is the failure this project would
+otherwise have shipped; the build error names the variable and where to set it.
+
 ---
 
 ## 0. Before you start
@@ -36,7 +43,7 @@ dashboard has no effect until you redeploy.
 | | |
 |---|---|
 | `main` is green | `image`, `backend (pytest)`, and `frontend` jobs all passing |
-| Migrations are current | `alembic current` locally shows `0005_subscriptions` |
+| Migrations are current | `alembic current` locally shows `0006_ai_analyses_created_at_index` |
 | Decide the Clerk instance | development (`pk_test_`) or production (`pk_live_`) — see below |
 
 **The Clerk decision gates everything else**, so make it now. A Clerk
@@ -100,7 +107,7 @@ uvicorn. A failed migration exits non-zero before uvicorn starts, so the deploy
 fails rather than serving against a schema the code does not expect.
 
 **This is the first time migrations run against the production database.** If
-you created a fresh Supabase project, it applies all five from empty. Watch the
+you created a fresh Supabase project, it applies all six from empty. Watch the
 deploy log for `==> alembic upgrade head`.
 
 ### Verify
@@ -110,12 +117,12 @@ curl https://fitmind-api.onrender.com/health
 # {"status":"ok","service":"fitmind-api","environment":"production"}
 
 curl https://fitmind-api.onrender.com/health/db
-# {"status":"ok","database":"reachable","latency_ms":..,"migration_revision":"0005_subscriptions"}
+# {"status":"ok","database":"reachable","latency_ms":..,"migration_revision":"0006_ai_analyses_created_at_index"}
 ```
 
 `migration_revision` is the one to read. It answers "did the migration actually
 run?" without shelling into anything, and a revision older than
-`0005_subscriptions` means the API is serving against a schema it does not
+`0006_ai_analyses_created_at_index` means the API is serving against a schema it does not
 expect.
 
 > **Free tier:** the service spins down after 15 minutes idle and takes about a
@@ -145,6 +152,11 @@ NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL=/dashboard
 
 No trailing slash on `NEXT_PUBLIC_API_URL`; `lib/api.ts` joins paths onto it.
 
+Vercel scopes environment variables per environment. Tick **Production** for
+all of these; tick **Preview** as well if you intend previews to work — a
+preview build without `NEXT_PUBLIC_API_URL` now fails rather than deploying an
+app that calls the visitor's own machine (see §4a).
+
 5. Deploy, and note the resulting origin (`https://<project>.vercel.app`).
 
 ---
@@ -168,6 +180,40 @@ land on a machine that is not running.
 Add the Vercel origin to `CLERK_AUTHORIZED_PARTIES` too, if you set it.
 
 Saving these triggers a redeploy. Wait for it.
+
+#### Preview deployments — decide now, not later
+
+Vercel creates a preview deployment for every branch whether or not you asked
+for one, at a generated hostname like
+`https://fitmind-git-my-branch-yourteam.vercel.app`. No literal allow-list can
+contain those, so out of the box every preview builds, deploys, reports success,
+and then fails on its first API call with a CORS error. The branch looks
+deployed and is unusable — and you find out during review, not before.
+
+Two honest options. Either is fine; drifting into the first by accident is not.
+
+**Leave previews blocked.** Do nothing. `main` is the only thing that talks to
+the API. Know that a preview URL is not a working app.
+
+**Allow them.** Set `CORS_ORIGIN_REGEX` on Render to a pattern that describes
+your previews and nothing else:
+
+```
+CORS_ORIGIN_REGEX=^https://fitmind-git-[a-z0-9-]+-yourteam\.vercel\.app$
+```
+
+Copy the team slug out of a real preview URL — it is not always your Vercel
+username. The pattern is matched against the entire origin, so anchors are
+belt-and-braces; **breadth is the mistake that matters.** `.*\.vercel\.app`
+looks like "our previews" and means "every deployment on Vercel", each of which
+could then call this API with a signed-in user's credentials. The app refuses
+that shape at startup rather than serving with it — see
+`_reject_overly_broad_cors_regex` in `app/core/config.py`.
+
+A preview also needs `NEXT_PUBLIC_API_URL` in Vercel's **Preview** environment,
+not just Production. Vercel scopes environment variables per environment, and a
+preview build without it now fails outright rather than silently pointing the
+app at the visitor's own machine.
 
 ### 4b. Clerk webhook
 
@@ -249,6 +295,15 @@ rollback alone is enough.
 | Stripe | Per transaction |
 | Anthropic | Per call — the only one that bills with no free floor |
 
+Because it is the only line that bills per use, it is the only one worth
+attacking. `AI_RATE_LIMIT_GLOBAL_DAILY` (default 200) is the ceiling on runs
+across all users per day, and it is what makes this a bounded number rather than
+an open one: the free-tier quota caps what an *account* costs, and accounts are
+free to create. `AI_RATE_LIMIT_PER_USER_HOURLY` (default 10) applies to premium
+too — an unlimited plan is a promise about a day's work, not a licence to run a
+paid endpoint in a loop. Both are declared in `render.yaml`, so raising one is a
+reviewed change and not a dashboard edit nobody sees.
+
 Both free tiers sleep. A Supabase project that pauses needs a manual resume in
 the dashboard; the API's `/health/db` will report `unreachable` until you do.
 
@@ -267,4 +322,7 @@ the dashboard; the API's `/health/db` will report `unreachable` until you do.
 - **No staging environment.** `main` deploys straight to production once CI is
   green. `autoDeployTrigger: checksPass` means a red suite blocks the deploy,
   which is the cheap half of the protection; a preview environment is the other
-  half and is not set up.
+  half and is not set up. Vercel's per-branch previews are the closest thing
+  available, and they need `CORS_ORIGIN_REGEX` to reach the API at all (§4a) —
+  note that they point at the *production* API and its production database,
+  which is what stops them from being a staging environment.

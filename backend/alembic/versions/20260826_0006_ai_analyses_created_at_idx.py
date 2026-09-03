@@ -1,6 +1,6 @@
 """ai_analyses.created_at index — for the global AI rate limit
 
-Revision ID: 0006_ai_analyses_created_at_index
+Revision ID: 0006_ai_analyses_created_at_idx
 Revises: 0005_subscriptions
 Create Date: 2026-08-26
 
@@ -21,13 +21,21 @@ builds cannot run inside a transaction, and Alembic wraps each migration in one;
 opting out means handling the failure modes of a build that can leave an invalid
 index behind. The table holds one row per coach run and the lock is measured in
 milliseconds at this size. Revisit at a scale this deployment does not have.
+
+The revision id is abbreviated (`_idx`, not `_index`) because it has to fit
+`alembic_version.version_num`, which Alembic creates as VARCHAR(32) and this
+project does not override. The unabbreviated name was 33 characters: the index
+was created, stamping the version failed, the transaction rolled back, and
+`alembic upgrade head` exited non-zero — so this migration could not apply to
+any database, new or existing. Keep new revision ids under 32 characters;
+`tests/test_migrations.py` fails the build if one is not.
 """
 
 from collections.abc import Sequence
 
 from alembic import op
 
-revision: str = "0006_ai_analyses_created_at_index"
+revision: str = "0006_ai_analyses_created_at_idx"
 down_revision: str | None = "0005_subscriptions"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None

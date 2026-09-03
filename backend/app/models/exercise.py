@@ -2,7 +2,7 @@
 
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
@@ -50,7 +50,18 @@ class Exercise(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
     # Compound lifts drive strength progression; isolation work drives volume.
     # The AI coach weighs them differently.
-    is_compound: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # `server_default` mirrors what migration 0001 actually put in the database.
+    # `default` alone is a Python-side value SQLAlchemy applies on insert, which
+    # says nothing about the column's DDL — so the model and the schema
+    # disagreed, and `alembic revision --autogenerate` proposed dropping the
+    # server default on every run. That makes the drift check in
+    # docs/phase-9-testing.md §0.6 permanently noisy, and a gate that always
+    # reports something is a gate nobody reads. Both are kept: the server
+    # default is what protects an insert that does not go through the ORM, such
+    # as the catalog seed in migration 0002.
+    is_compound: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
     instructions: Mapped[str | None] = mapped_column(Text)
 
     workout_entries: Mapped[list["WorkoutExercise"]] = relationship(

@@ -43,7 +43,7 @@ otherwise have shipped; the build error names the variable and where to set it.
 | | |
 |---|---|
 | `main` is green | `image`, `backend (pytest)`, and `frontend` jobs all passing |
-| Migrations are current | `alembic current` locally shows `0006_ai_analyses_created_at_index` |
+| Migrations are current | `alembic current` locally shows `0006_ai_analyses_created_at_idx` |
 | Decide the Clerk instance | development (`pk_test_`) or production (`pk_live_`) — see below |
 
 **The Clerk decision gates everything else**, so make it now. A Clerk
@@ -117,12 +117,12 @@ curl https://fitmind-api.onrender.com/health
 # {"status":"ok","service":"fitmind-api","environment":"production"}
 
 curl https://fitmind-api.onrender.com/health/db
-# {"status":"ok","database":"reachable","latency_ms":..,"migration_revision":"0006_ai_analyses_created_at_index"}
+# {"status":"ok","database":"reachable","latency_ms":..,"migration_revision":"0006_ai_analyses_created_at_idx"}
 ```
 
 `migration_revision` is the one to read. It answers "did the migration actually
 run?" without shelling into anything, and a revision older than
-`0006_ai_analyses_created_at_index` means the API is serving against a schema it does not
+`0006_ai_analyses_created_at_idx` means the API is serving against a schema it does not
 expect.
 
 > **Free tier:** the service spins down after 15 minutes idle and takes about a

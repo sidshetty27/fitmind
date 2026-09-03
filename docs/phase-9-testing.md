@@ -17,8 +17,8 @@ and `APP` means your Vercel origin (e.g. `https://fitmind.vercel.app`).
 | 0.1 | `cd frontend && npx tsc --noEmit` | No output |
 | 0.2 | `cd frontend && npm run lint` | No output |
 | 0.3 | `cd frontend && npm run build` | ✓ Compiled successfully, 14 routes |
-| 0.4 | `cd backend && .venv\Scripts\python -m pytest -q` | ✅ `224 passed, 6 skipped` |
-| 0.5 | `.venv\Scripts\python -m alembic current` | Shows `0006_ai_analyses_created_at_index` |
+| 0.4 | `cd backend && .venv\Scripts\python -m pytest -q` | ✅ `232 passed, 6 skipped` |
+| 0.5 | `.venv\Scripts\python -m alembic current` | Shows `0006_ai_analyses_created_at_idx` |
 | 0.6 | `.venv\Scripts\python -m alembic revision --autogenerate -m "drift"` | ✅ Empty `upgrade()` — models and migrations agree. **Delete the generated file** |
 | 0.7 | GitHub → Actions on `main` | ✅ All three jobs green, including **backend (docker build + boot)** |
 
@@ -61,10 +61,10 @@ all of it. Run it if you have Docker and want the faster loop.
 | 2.2 | Watch the deploy log | ✅ `==> alembic upgrade head`, then `==> uvicorn on 0.0.0.0:10000` |
 | 2.3 | `curl $API/health` | ✅ `{"status":"ok","service":"fitmind-api","environment":"production"}` |
 | 2.4 | Check `environment` in that response | ✅ Reads `production`, **not** `development` — proves `ENVIRONMENT` reached the container |
-| 2.5 | `curl $API/health/db` | ✅ `"database":"reachable"` and `"migration_revision":"0006_ai_analyses_created_at_index"` |
-| 2.6 | 🔴 If `migration_revision` is older than `0006_ai_analyses_created_at_index` | The API is serving against a schema it does not expect. Stop — check `MIGRATION_DATABASE_URL` |
+| 2.5 | `curl $API/health/db` | ✅ `"database":"reachable"` and `"migration_revision":"0006_ai_analyses_created_at_idx"` |
+| 2.6 | 🔴 If `migration_revision` is older than `0006_ai_analyses_created_at_idx` | The API is serving against a schema it does not expect. Stop — check `MIGRATION_DATABASE_URL` |
 | 2.7 | `curl $API/docs` | ✅ Swagger UI loads, `templates`/`billing`/`coach` sections present |
-| 2.8 | Supabase → Table editor | ✅ All tables present, `alembic_version` holds `0006_ai_analyses_created_at_index` |
+| 2.8 | Supabase → Table editor | ✅ All tables present, `alembic_version` holds `0006_ai_analyses_created_at_idx` |
 | 2.9 | Redeploy from the Render dashboard, watch the log | ✅ `alembic upgrade head` runs again and is a **no-op** — it does not re-apply anything |
 
 **Migration failure drill.** Temporarily set `MIGRATION_DATABASE_URL` to a bad
@@ -260,7 +260,7 @@ Do this once, deliberately, before you need it.
 cd frontend && npx tsc --noEmit     # expect: no output
 cd frontend && npm run lint         # expect: no output
 cd frontend && npm run build        # expect: ✓ Compiled successfully
-cd backend  && .venv\Scripts\python -m pytest -q   # expect: 224 passed, 6 skipped
+cd backend  && .venv\Scripts\python -m pytest -q   # expect: 232 passed, 6 skipped
 ```
 
 Plus, on every pull request, `backend (docker build + boot)` in CI.
@@ -277,6 +277,16 @@ Two of the sections above are covered by the suite rather than only by hand:
 - `tests/test_entitlements.py` — the rate limits, including the two properties
   §6a exists to check by hand: that premium is not exempt, and that the global
   ceiling refuses a user who is well within their own allowance.
+- `tests/test_migrations.py` — revision-id length, a single head, and a
+  `downgrade()` on every migration. §0.5 is the step that catches a migration
+  that cannot apply; this makes the cheap half of it automatic.
+
+⚠️ **Migrations are still not executed by CI.** The Docker job sets
+`RUN_MIGRATIONS=false` because it has no database, and the suite builds its
+schema from the models rather than by upgrading. `test_migrations.py` reads the
+revision files statically — it does not run them. §0.5 and §0.6 remain the only
+place a migration is actually executed before production, which is why they are
+listed as gates and not as nice-to-haves.
 
 ---
 
